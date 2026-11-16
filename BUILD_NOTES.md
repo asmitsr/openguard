@@ -4,6 +4,124 @@ Built 16 Nov 2026. Backend + dashboard verified (typecheck green, local
 `wrangler dev` smoke test passed, docs audit passed). Android written but
 never compiled (no SDK/Java on this VM) — first real build is GitHub Actions.
 
+## Map + offline round (built 17 Nov 2026, not yet deployed)
+
+Fixes the user asked for after testing the Phase 2 APK: he could not
+find the phone on the map, the same phone appeared twice in the device
+list, and he wanted the phone to reconnect to WiFi when it goes offline.
+
+### Deploy steps (parent) — in this order
+
+1. **Apply the migration to Neon.** Paste `db/migrations/004_dedup.sql`
+   into the Neon SQL Editor and run it (idempotent). Adds
+   `devices.hardware_id` + a partial unique index on
+   `(user_id, hardware_id)` for non-NULL values. Do NOT re-apply
+   `db/schema.sql`, `002_commands.sql` or `003_recovery.sql`.
+2. **Deploy the Worker** (backend changed: device register re-link).
+3. **Push to GitHub** — CI builds the Android APK as before.
+
+### What was built
+
+- **Map discoverability (Android):** each device row now has an explicit
+  map-pin button (opens the map for that device) next to the shield icon,
+  plus a one-line hint above the list ("Tap a device — or its map pin —
+  to see it on the map"). Tapping the row still opens the map.
+- **Map reliability (Android):** the last known location marker is bigger
+  (12dp) with a translucent halo so it stands out; the map screen shows
+  "Last seen … · ±N m" under the map; the empty state now says "No
+  locations yet — turn tracking on and wait for the first fix"; API
+  errors get a Retry button; and a style/tiles load failure (MapLibre
+  `OnDidFailLoadingMapListener`) shows an error + Retry that recreates
+  the MapView.
+- **Relative time everywhere:** new shared `core/common/RelativeTime.kt`
+  (`relativeTime()`, same thresholds as the dashboard's `relTime()`).
+  "Last seen" is now relative in the device list, on the map screen, and
+  in history (which previously showed an absolute date). The dashboard
+  already used `relTime()` for last-seen and `toLocaleString()` for
+  history — no dashboard change needed.
+- **Duplicate devices (Android + backend):** reinstalling the app used to
+  register the same phone as a new device. The app now sends its
+  ANDROID_ID as `hardware_id` on register; the server re-links instead
+  of duplicating — if a device with the same `(user_id, hardware_id)`
+  exists, it returns the EXISTING row (history preserved) with a FRESH
+  device token (HTTP 200, audit event `device_relink`). New devices
+  still get 201. A concurrent-register race (23505) falls back to the
+  same re-link. The one-time-token-shown-once behaviour is unchanged,
+  and `hardware_id` is never returned by the API (it stays server-side).
+  Note: rows registered before migration 004 have NULL `hardware_id`,
+  so an EXISTING duplicate is not auto-merged — unlink the extra row
+  once from the app or dashboard; reinstalls after that re-link.
+- **Offline → WiFi reconnect (Android, the feasible maximum):** new
+  `core/location/WifiReconnect.kt` + a Settings "WiFi reconnect" section.
+  The owner enters a network (SSID + password, or open); the app
+  suggests it via WifiNetworkSuggestion (API 29+), Android asks ONCE
+  for approval, and the OS then auto-connects when the network is in
+  range. The password is handed to Android only and never stored. The
+  Settings screen lists the app's suggested networks (read-back needs
+  API 30+) and can remove them, and opens the system WiFi panel in one
+  tap. When connectivity is lost with NO network left (LocationService
+  NetworkCallback `onLost`, guarded by an `activeNetwork == null` check
+  so WiFi→cellular handovers do not count), the app records one
+  `sync_gap` event per hour (the server's event CHECK has no offline
+  type — the reason is in the details) and, if WiFi is off, posts a
+  high-priority notification with a one-tap "Turn on WiFi" action that
+  opens the WiFi panel. No "back online" event: the resumed heartbeat
+  already shows it, and `onAvailable` fires on every handover.
+- **Offline outbox (verified, no change needed):** locations are written
+  to the Room outbox and deleted only after the server confirms; the
+  existing `onAvailable` callback already enqueues a one-time worker,
+  and UploadWorker uploads locations first — so queued locations flush
+  on reconnect. Confirmed by reading the code; no edit was required.
+- **New permissions (both normal, no runtime prompt):**
+  `ACCESS_WIFI_STATE` (read whether WiFi is on) and `CHANGE_WIFI_STATE`
+  (add/remove network suggestions). No location-permission changes.
+
+### Honest WiFi limits (also shown in the app)
+
+- The app CANNOT turn WiFi on, force a connection, or read the user's
+  saved networks: `setWifiEnabled()` is a no-op for apps targeting
+  Android 10+, and `getConfiguredNetworks()` returns nothing useful to
+  a third-party app. That is why the owner enters networks by hand and
+  why the offline notification opens the WiFi panel for a one-tap
+  manual toggle.
+- Suggestions need a one-time user approval (Android shows the prompt);
+  if the owner denies it, suggestions are ignored until re-enabled in
+  system settings. After approval, the OS — not the app — decides when
+  to connect (in range, no better network).
+- Suggestions need Android 10+; listing them needs Android 11+.
+  Below Android 10 the Settings section explains it is unsupported.
+- A suggestion does not help while WiFi is off — that is what the
+  offline notification is for.
+
+### Test the changed endpoint (BASE = deployed worker URL)
+
+```sh
+# register a device WITH a hardware id (ACCESS = user access token)
+curl -s -X POST $BASE/api/v1/devices -H "Authorization: Bearer $ACCESS" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Pixel test","model":"Pixel 8","os_version":"Android 14","hardware_id":"0123456789abcdef"}'
+# → 201, {device, device_token} — save DEVICE_ID + DEVICE_TOKEN
+# register AGAIN with the same hardware_id (simulates a reinstall)
+curl -s -X POST $BASE/api/v1/devices -H "Authorization: Bearer $ACCESS" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Pixel test 2","model":"Pixel 8","os_version":"Android 14","hardware_id":"0123456789abcdef"}'
+# → 200, SAME device id, NEW device_token; the old token now gets 401
+# (list devices to confirm there is still only one row)
+curl -s $BASE/api/v1/devices -H "Authorization: Bearer $ACCESS"
+# register without hardware_id still works (old clients): → 201, new row
+curl -s -X POST $BASE/api/v1/devices -H "Authorization: Bearer $ACCESS" \
+  -H 'Content-Type: application/json' -d '{"name":"No HWID"}'
+```
+
+### Map + offline stubbed / gaps
+
+- Existing duplicate rows (NULL `hardware_id`) are not auto-merged;
+  the owner unlinks the extra one once (see above).
+- The map still uses OSM raster tiles directly; tile load failures show
+  the retry state but there is no offline tile cache (Phase 5).
+- WiFi suggestions cover networks the owner enters by hand only — the
+  app cannot see already-saved networks on Android 10+ (see limits).
+
 ## Phase 3 Remote Recovery (built 16 Nov 2026, not yet deployed)
 
 Remote data erase (with step-up auth + on-device abort), remote sign-out,

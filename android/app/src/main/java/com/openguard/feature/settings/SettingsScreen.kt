@@ -39,6 +39,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.openguard.R
 import com.openguard.core.location.TrackingPermissions
+import com.openguard.core.location.WifiReconnect
 import com.openguard.core.security.DeviceAdminManager
 import com.openguard.core.security.SecurityPrefs
 import com.openguard.core.security.SimMonitor
@@ -68,6 +69,9 @@ fun SettingsScreen(
     var deletePassword by remember { mutableStateOf("") }
     var showRevokeDialog by remember { mutableStateOf(false) }
     var showSignOutDeviceDialog by remember { mutableStateOf(false) }
+    var wifiSsid by remember { mutableStateOf("") }
+    var wifiPassword by remember { mutableStateOf("") }
+    var wifiResult by remember { mutableStateOf<String?>(null) }
 
     // Bump on every resume so admin/SIM state changed in system Settings
     // is picked up when the user comes back.
@@ -212,6 +216,85 @@ fun SettingsScreen(
                 iconRes = R.drawable.ic_check,
                 enabled = hasPhoneState,
             )
+
+            Spacer(Modifier.height(24.dp))
+            SectionHeader(iconRes = R.drawable.ic_radar, title = "WiFi reconnect")
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Android does not let any app turn WiFi on or force a " +
+                    "connection — OpenGuard cannot do that either. What it " +
+                    "can do: suggest a network you enter here. Android asks " +
+                    "you once for approval, then connects automatically " +
+                    "whenever that network is in range, even after the " +
+                    "phone was offline. Your password is handed to Android " +
+                    "only and is never stored by OpenGuard.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (!WifiReconnect.isSupported()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Needs Android 10 or newer.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            } else {
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = wifiSsid,
+                    onValueChange = { wifiSsid = it },
+                    label = { Text("WiFi network name") },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = wifiPassword,
+                    onValueChange = { wifiPassword = it },
+                    label = { Text("Password (leave empty for open networks)") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(12.dp))
+                GuardOutlinedButton(
+                    onClick = {
+                        wifiResult = WifiReconnect.describeAddStatus(
+                            WifiReconnect.suggestNetwork(context, wifiSsid, wifiPassword),
+                        )
+                        tick++
+                    },
+                    text = "Suggest this network",
+                    enabled = wifiSsid.isNotBlank(),
+                )
+                wifiResult?.let { result ->
+                    Spacer(Modifier.height(8.dp))
+                    Text(result, style = MaterialTheme.typography.bodyMedium)
+                }
+                val suggested = remember(tick) { WifiReconnect.suggestedSsids(context) }
+                if (suggested.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Suggested networks: ${suggested.joinToString(", ")}",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    GuardOutlinedButton(
+                        onClick = {
+                            WifiReconnect.removeAllSuggestions(context)
+                            wifiResult = "Suggestions removed."
+                            tick++
+                        },
+                        text = "Remove suggestions",
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+                GuardOutlinedButton(
+                    onClick = { WifiReconnect.openWifiPanel(context) },
+                    text = "Open WiFi settings",
+                )
+            }
 
             Spacer(Modifier.height(24.dp))
             SectionHeader(

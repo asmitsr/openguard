@@ -74,4 +74,10 @@ object SecurityConfig {
 
     /** Unique name of the one-time backstop worker that wipes if the countdown activity died. */
     const val ERASE_WORK_NAME = "openguard-erase-backstop"
+
+    // ---- Map + offline round: WiFi reconnect ----
+    const val WIFI_OFFLINE_NOTIFICATION_ID = 6
+
+    /** At most one offline-transition event per period (a flapping connection must not spam). */
+    const val OFFLINE_EVENT_COOLDOWN_MS = 60 * 60 * 1000L
 }

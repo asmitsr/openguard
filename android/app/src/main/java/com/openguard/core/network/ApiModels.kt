@@ -61,6 +61,9 @@ data class RegisterDeviceRequest(
     @SerializedName("name") val name: String,
     @SerializedName("model") val model: String?,
     @SerializedName("os_version") val osVersion: String?,
+    // Stable per app + device (ANDROID_ID). The server re-links a
+    // reinstall to its existing device row instead of duplicating it.
+    @SerializedName("hardware_id") val hardwareId: String? = null,
 )
 
 /** `device_token` is shown once by the backend — store it immediately. */

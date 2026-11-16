@@ -20,6 +20,10 @@
     <string name="sim_notification_title">SIM card changed</string>
     <string name="sim_notification_text">Check if this was you — open OpenGuard to review.</string>
 
+    <string name="wifi_offline_notification_title">You are offline — WiFi is off</string>
+    <string name="wifi_offline_notification_text">Turn WiFi on so OpenGuard can reach this phone again.</string>
+    <string name="wifi_offline_notification_action">Turn on WiFi</string>
+
     <string name="erase_channel_name">Remote erase</string>
     <string name="erase_notification_title">Erase countdown started</string>
     <string name="erase_notification_text">This phone will be erased in 60 seconds. Tap to abort.</string>

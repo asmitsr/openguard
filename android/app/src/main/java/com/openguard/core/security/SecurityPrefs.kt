@@ -59,6 +59,14 @@ object SecurityPrefs {
         securityPrefs(context).edit { putLong(KEY_LAST_SYNC_GAP_EVENT_AT, atMillis) }
     }
 
+    /** Last offline-transition event (LocationService.onLost), for the cooldown. */
+    fun lastOfflineEventAt(context: Context): Long =
+        securityPrefs(context).getLong(KEY_LAST_OFFLINE_EVENT_AT, 0)
+
+    fun setLastOfflineEventAt(context: Context, atMillis: Long) {
+        securityPrefs(context).edit { putLong(KEY_LAST_OFFLINE_EVENT_AT, atMillis) }
+    }
+
     // Replay protection: executed commands are never executed twice.
     // Stored as "commandId:nonce" strings (nonce may be empty).
     fun hasExecutedCommand(context: Context, id: String, nonce: String): Boolean =
@@ -100,6 +108,7 @@ object SecurityPrefs {
     private const val KEY_LAST_LOW_BATTERY_EVENT_AT = "last_low_battery_event_at"
     private const val KEY_LAST_SUCCESSFUL_UPLOAD_AT = "last_successful_upload_at"
     private const val KEY_LAST_SYNC_GAP_EVENT_AT = "last_sync_gap_event_at"
+    private const val KEY_LAST_OFFLINE_EVENT_AT = "last_offline_event_at"
     private const val KEY_EXECUTED_COMMANDS = "executed_commands"
     private const val KEY_LAST_SEEN_SUBSCRIPTION_IDS = "last_seen_subscription_ids"
     private const val KEY_TRUSTED_SUBSCRIPTION_IDS = "trusted_subscription_ids"

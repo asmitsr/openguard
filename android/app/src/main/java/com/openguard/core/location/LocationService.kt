@@ -67,13 +67,24 @@ class LocationService : Service() {
 
     // Connectivity-triggered command fetch: when the network comes back,
     // poll for pending commands right away instead of waiting up to 15
-    // minutes for the periodic worker. Only active while tracking runs —
-    // this service (and the callback) stops when tracking stops. No
-    // manifest CONNECTIVITY_ACTION receiver: it no longer fires on
-    // Android 7+.
+    // minutes for the periodic worker. The same one-time run also flushes
+    // the Room location outbox (UploadWorker uploads locations first),
+    // so locations queued while offline go out on reconnect. Only active
+    // while tracking runs — this service (and the callback) stops when
+    // tracking stops. No manifest CONNECTIVITY_ACTION receiver: it no
+    // longer fires on Android 7+.
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             UploadWorker.enqueueOneTime(applicationContext)
+        }
+
+        override fun onLost(network: Network) {
+            // onLost fires per network: a WiFi -> cellular handover loses
+            // one network while another is available. Only act when NO
+            // network is left — then record the offline transition and,
+            // if WiFi is off, notify the owner (WifiReconnect).
+            if (connectivityManager?.activeNetwork != null) return
+            scope.launch { WifiReconnect.onOffline(applicationContext, database) }
         }
     }
 

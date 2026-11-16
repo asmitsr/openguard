@@ -23,15 +23,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.openguard.R
+import com.openguard.core.common.relativeTime
 import com.openguard.core.network.LocationDto
 import com.openguard.ui.ErrorText
 import com.openguard.ui.GuardButton
 import com.openguard.ui.GuardCard
 import com.openguard.ui.GuardTopBar
 import com.openguard.ui.TintedIcon
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 @Composable
 fun HistoryScreen(
@@ -96,7 +94,7 @@ private fun LocationRow(location: LocationDto) {
                     Text("±${location.accuracy.toInt()} m", style = MaterialTheme.typography.bodySmall)
                 }
                 Text(
-                    formatTime(location.recordedAt),
+                    relativeTime(location.recordedAt),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -112,11 +110,4 @@ private fun LocationRow(location: LocationDto) {
     }
 }
 
-private val timeFormatter: DateTimeFormatter =
-    DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm")
 
-private fun formatTime(iso: String): String = try {
-    Instant.parse(iso).atZone(ZoneId.systemDefault()).format(timeFormatter)
-} catch (e: Exception) {
-    iso
-}

@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { NeonDbError } from '@neondatabase/serverless'
 import { db, type Env } from '../lib/db'
 import { authenticateDevice, authenticateUser, newToken, sha256Hex } from '../lib/auth'
 import { audit } from '../lib/audit'
@@ -24,30 +25,77 @@ app.get('/', async (c) => {
 app.post('/', async (c) => {
   const auth = await authenticateUser(c)
   if (!auth) return err(c, 401, 'unauthorized')
-  const body = await jsonBody<{ name?: unknown; model?: unknown; os_version?: unknown }>(c)
+  const body = await jsonBody<{
+    name?: unknown
+    model?: unknown
+    os_version?: unknown
+    hardware_id?: unknown
+  }>(c)
   const name = body?.name
   const model = body?.model
   const osVersion = body?.os_version
+  const hardwareId = body?.hardware_id
   if (
     typeof name !== 'string' ||
     !name.trim() ||
     name.length > 100 ||
     !isOptString(model, 100) ||
-    !isOptString(osVersion, 100)
+    !isOptString(osVersion, 100) ||
+    !isOptString(hardwareId, 128)
   ) {
-    return err(c, 400, 'name (1-100 chars) required; model and os_version max 100 chars')
+    return err(
+      c,
+      400,
+      'name (1-100 chars) required; model and os_version max 100 chars; hardware_id max 128 chars',
+    )
+  }
+  const sql = db(c.env)
+  const trimmedName = name.trim()
+  const hwId = typeof hardwareId === 'string' && hardwareId ? hardwareId : null
+  // Re-link: a reinstall sends the same hardware_id (ANDROID_ID). Return
+  // the EXISTING row (history preserved) with a fresh device token instead
+  // of duplicating the phone. The token is shown once, as on register.
+  const relink = async (id: string) => {
+    const token = newToken()
+    const rows = await sql`
+      UPDATE devices
+      SET name = ${trimmedName}, model = ${model ?? null},
+          os_version = ${osVersion ?? null}, token_hash = ${await sha256Hex(token)}
+      WHERE id = ${id}
+      RETURNING id, name, model, os_version, last_seen_at, battery_level,
+                battery_charging, network_type, created_at`
+    await audit(c.env, auth.user.id, 'device_relink', id, { name: trimmedName })
+    return c.json({ device: rows[0], device_token: token }, 200)
+  }
+  if (hwId) {
+    const existing = await sql`
+      SELECT id FROM devices
+      WHERE user_id = ${auth.user.id} AND hardware_id = ${hwId}`
+    if (existing.length) return relink(existing[0].id as string)
   }
   const deviceToken = newToken()
-  const rows = await db(c.env)`
-    INSERT INTO devices (user_id, name, model, os_version, token_hash)
-    VALUES (${auth.user.id}, ${name.trim()}, ${model ?? null}, ${osVersion ?? null},
-            ${await sha256Hex(deviceToken)})
-    RETURNING id, name, model, os_version, last_seen_at, battery_level,
-              battery_charging, network_type, created_at`
-  const device = rows[0]
-  await audit(c.env, auth.user.id, 'device_register', device.id as string, { name: name.trim() })
-  // device_token is shown once — only its hash is stored.
-  return c.json({ device, device_token: deviceToken }, 201)
+  try {
+    const rows = await sql`
+      INSERT INTO devices (user_id, name, model, os_version, token_hash, hardware_id)
+      VALUES (${auth.user.id}, ${trimmedName}, ${model ?? null}, ${osVersion ?? null},
+              ${await sha256Hex(deviceToken)}, ${hwId})
+      RETURNING id, name, model, os_version, last_seen_at, battery_level,
+                battery_charging, network_type, created_at`
+    const device = rows[0]
+    await audit(c.env, auth.user.id, 'device_register', device.id as string, { name: trimmedName })
+    // device_token is shown once — only its hash is stored.
+    return c.json({ device, device_token: deviceToken }, 201)
+  } catch (e) {
+    // Two concurrent registers with the same hardware_id: the second
+    // hits the unique index (23505). Re-link instead of erroring.
+    if (e instanceof NeonDbError && e.code === '23505' && hwId) {
+      const existing = await sql`
+        SELECT id FROM devices
+        WHERE user_id = ${auth.user.id} AND hardware_id = ${hwId}`
+      if (existing.length) return relink(existing[0].id as string)
+    }
+    throw e
+  }
 })
 
 app.delete('/:id', async (c) => {

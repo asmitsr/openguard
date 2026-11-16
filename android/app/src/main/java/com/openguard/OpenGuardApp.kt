@@ -32,7 +32,9 @@ class OpenGuardApp : Application() {
 
     val authRepository: AuthRepository by lazy { AuthRepository(api, tokenStore) }
 
-    val deviceRepository: DeviceRepository by lazy { DeviceRepository(api, tokenStore) }
+    val deviceRepository: DeviceRepository by lazy {
+        DeviceRepository(api, tokenStore, applicationContext)
+    }
 
     val commandRepository: CommandRepository by lazy { CommandRepository(api) }
 

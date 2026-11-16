@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.openguard.R
+import com.openguard.core.common.relativeTime
 import com.openguard.core.location.TrackingState
 import com.openguard.core.network.DeviceDto
 import com.openguard.ui.ErrorText
@@ -123,6 +124,14 @@ fun DeviceListScreen(
                 Text("No devices yet. Add this phone to start tracking it.")
                 Spacer(Modifier.height(16.dp))
             }
+            if (state.devices.isNotEmpty()) {
+                Text(
+                    "Tap a device — or its map pin — to see it on the map.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+            }
             LazyColumn(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -210,7 +219,7 @@ private fun DeviceRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    "Last seen: ${device.lastSeenAt ?: "never"}",
+                    "Last seen: ${relativeTime(device.lastSeenAt)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -221,6 +230,12 @@ private fun DeviceRow(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
+            }
+            IconButton(onClick = onClick) {
+                Icon(
+                    painterResource(R.drawable.ic_map_pin),
+                    contentDescription = "View on map",
+                )
             }
             IconButton(onClick = onCommandsClick) {
                 Icon(

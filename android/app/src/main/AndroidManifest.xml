@@ -3,6 +3,11 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- WiFi reconnect: read whether WiFi is on + suggest networks the owner
+         enters (both normal permissions, no runtime prompt). The app can
+         never turn WiFi on itself — the owner does that from the WiFi panel. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <!-- Requested separately, only after foreground location is granted (Android 11+ rule). -->
