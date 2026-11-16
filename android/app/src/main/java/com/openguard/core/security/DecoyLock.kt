@@ -137,8 +137,11 @@ object DecoyLock {
         }
         val owners = OverlayOwners()
         val view = ComposeView(appContext).apply {
-            setViewTreeLifecycleOwner(owners)
-            setViewTreeSavedStateRegistryOwner(owners)
+            // Static set() on the ViewTree owner objects (not the
+            // View extension functions: the savedstate extension is
+            // absent from savedstate 1.2.1's artifact).
+            ViewTreeLifecycleOwner.set(this, owners)
+            ViewTreeSavedStateRegistryOwner.set(this, owners)
             setContent { DecoyContent(appContext) }
             addOnAttachStateChangeListener(detachListener)
         }
@@ -232,9 +235,9 @@ object DecoyLock {
     private fun windowManager(context: Context): WindowManager =
         context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
-    private inline fun onMain(crossinline block: () -> Unit) {
+    private fun onMain(block: () -> Unit) {
         if (Looper.myLooper() == Looper.getMainLooper()) block()
-        else mainHandler.post(block)
+        else mainHandler.post { block() }
     }
 }
 
