@@ -14,7 +14,7 @@ import org.maplibre.android.MapLibre
  * Manual dependency container (no DI framework in the MVP — the graph is
  * small enough that constructor wiring in one place is the least code).
  *
- * Modules note: the blueprint's core/* and feature/* layers are packages
+ * Modules note: the blueprint's core and feature layers are packages
  * inside this single app module. Splitting them into Gradle modules is
  * deferred until the app grows enough to need it.
  */
