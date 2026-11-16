@@ -27,6 +27,8 @@ import com.openguard.core.network.SecurityEventRequest
 import com.openguard.core.network.SecurityEventsUploadRequest
 import com.openguard.core.network.UploadLocationsRequest
 import com.openguard.core.security.CommandExecutor
+import com.openguard.core.security.DecoyLock
+import com.openguard.core.security.LostModeStore
 import com.openguard.core.security.SecurityEvents
 import com.openguard.core.security.SecurityPrefs
 import com.openguard.core.security.SimMonitor
@@ -113,6 +115,12 @@ class UploadWorker(appContext: Context, params: WorkerParameters) :
                         AckCommandRequest(deviceId, outcome.status, outcome.result),
                     )
                 }
+            }
+            // Decoy backstop: if Lost Mode is on but the overlay is gone
+            // (process died, tracking off), bring it back. No-op when it
+            // is already showing or the overlay permission was never granted.
+            if (LostModeStore.isOn(applicationContext)) {
+                DecoyLock.ensureShown(applicationContext)
             }
             if (contactedServer) {
                 SecurityPrefs.setLastSuccessfulUploadAt(

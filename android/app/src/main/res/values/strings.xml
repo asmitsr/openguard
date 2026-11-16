@@ -31,4 +31,6 @@
     <string name="device_admin_label">OpenGuard device admin</string>
     <string name="device_admin_description">Lets OpenGuard lock this phone when you send a Lock or Lost Mode command, and erase it when you send an Erase command.</string>
     <string name="device_admin_explanation">OpenGuard uses device admin only to lock this phone when you send a Lock or Lost Mode command, and to erase it when you send an Erase command. It never sets or changes your password, and you can remove it anytime from Settings.</string>
+
+    <string name="power_menu_guard_description">Blocks the power-off menu while Lost Mode is on, so a lost phone cannot be switched off from the power menu. OpenGuard only watches for the power menu window; it does not read screen content.</string>
 </resources>

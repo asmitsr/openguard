@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import com.openguard.OpenGuardApp
 import com.openguard.R
+import com.openguard.core.security.DecoyLock
 import com.openguard.core.security.LostMode
 import com.openguard.core.security.LostModeStore
 import com.openguard.ui.ErrorText
@@ -80,6 +81,14 @@ class LostModeActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    override fun onDestroy() {
+        // Left without turning Lost Mode off (e.g. Home): the decoy
+        // overlay takes over again. No-op when Lost Mode was turned off
+        // (the store is already cleared) or without overlay permission.
+        if (LostModeStore.isOn(this)) DecoyLock.show(this)
+        super.onDestroy()
     }
 }
 

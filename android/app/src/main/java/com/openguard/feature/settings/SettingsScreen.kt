@@ -3,7 +3,9 @@ package com.openguard.feature.settings
 import android.app.Activity
 import android.content.Intent
 import android.provider.Settings
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,6 +19,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -28,6 +31,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -40,7 +44,9 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.openguard.R
 import com.openguard.core.location.TrackingPermissions
 import com.openguard.core.location.WifiReconnect
+import com.openguard.core.security.DecoyLock
 import com.openguard.core.security.DeviceAdminManager
+import com.openguard.core.security.PowerMenuGuard
 import com.openguard.core.security.SecurityPrefs
 import com.openguard.core.security.SimMonitor
 import com.openguard.ui.ErrorText
@@ -86,6 +92,9 @@ fun SettingsScreen(
     val adminActive = remember(tick) { DeviceAdminManager.isAdminActive(context) }
     val hasPhoneState = remember(tick) { TrackingPermissions.hasPhoneState(context) }
     val trustedSimCount = remember(tick) { SecurityPrefs.trustedSubscriptionIds(context).size }
+    val overlayAllowed = remember(tick) { DecoyLock.hasPermission(context) }
+    val guardServiceOn = remember(tick) { PowerMenuGuard.isServiceEnabled(context) }
+    var guardEnabled by remember(tick) { mutableStateOf(PowerMenuGuard.isGuardEnabled(context)) }
 
     Scaffold(
         topBar = { GuardTopBar(title = "Settings", onBack = onBack) },
@@ -172,13 +181,16 @@ fun SettingsScreen(
             Text(
                 if (adminActive) {
                     "Device admin is active — Lock and Lost Mode can lock " +
-                        "this phone, and remote erase can wipe it. " +
-                        "OpenGuard never sets or changes your password."
+                        "this phone, remote erase can wipe it, and the " +
+                        "camera (and flashlight) is disabled while Lost " +
+                        "Mode is on. OpenGuard never sets or changes your " +
+                        "password."
                 } else {
-                    "Device admin is not enabled. Lock, Lost Mode locking " +
-                        "and remote erase need it — without it, Lost Mode " +
-                        "still shows on screen but the phone is not locked, " +
-                        "and erase is refused."
+                    "Device admin is not enabled. It unlocks Lock, Lost " +
+                        "Mode locking and remote erase. Without it, Lost " +
+                        "Mode still covers the screen with the decoy lock, " +
+                        "but the phone itself is not locked, the camera " +
+                        "stays on, and erase is refused."
                 },
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -190,6 +202,92 @@ fun SettingsScreen(
                     iconRes = R.drawable.ic_lock,
                 )
             }
+
+            Spacer(Modifier.height(24.dp))
+            SectionHeader(iconRes = R.drawable.ic_lock, title = "Lost Mode screen")
+            Spacer(Modifier.height(8.dp))
+            Text(
+                if (overlayAllowed) {
+                    "OpenGuard may display over other apps — during Lost " +
+                        "Mode the decoy lock covers the whole screen and " +
+                        "shows your message right away, no tap needed."
+                } else {
+                    "Allow OpenGuard to display over other apps so Lost " +
+                        "Mode can cover the whole screen with the decoy " +
+                        "lock and your message. Without it, Lost Mode " +
+                        "only shows as a notification you must tap."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (!overlayAllowed) {
+                Spacer(Modifier.height(12.dp))
+                GuardOutlinedButton(
+                    onClick = { activity?.let { DecoyLock.requestPermission(it) } },
+                    text = "Allow display over other apps",
+                    iconRes = R.drawable.ic_shield,
+                )
+            }
+
+            Spacer(Modifier.height(24.dp))
+            SectionHeader(iconRes = R.drawable.ic_shield_check, title = "Power-off protection")
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "During Lost Mode, the power-off menu is blocked so a " +
+                    "lost phone cannot be switched off from the power " +
+                    "button. This needs OpenGuard turned on in " +
+                    "Accessibility settings. OpenGuard only watches for " +
+                    "the power menu window — it never reads screen content.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                if (guardServiceOn) {
+                    if (guardEnabled) {
+                        "Power-off protection is on."
+                    } else {
+                        "Protection is paused — turn it back on below."
+                    }
+                } else {
+                    "Not enabled yet — turn on OpenGuard in Accessibility settings."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Block power menu during Lost Mode",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(
+                    checked = guardEnabled,
+                    onCheckedChange = {
+                        guardEnabled = it
+                        PowerMenuGuard.setGuardEnabled(context, it)
+                    },
+                    enabled = guardServiceOn,
+                )
+            }
+            if (!guardServiceOn) {
+                Spacer(Modifier.height(12.dp))
+                GuardOutlinedButton(
+                    onClick = { PowerMenuGuard.openAccessibilitySettings(context) },
+                    text = "Open accessibility settings",
+                    iconRes = R.drawable.ic_shield,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Limit: holding power for about 10 seconds forces a " +
+                    "restart no app can block. Lost Mode comes back " +
+                    "after the reboot.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             Spacer(Modifier.height(24.dp))
             SectionHeader(iconRes = R.drawable.ic_smartphone, title = "Trusted SIM")

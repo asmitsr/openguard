@@ -41,6 +41,7 @@ import com.openguard.core.common.SecurityConfig
 import com.openguard.core.location.UploadWorker
 import com.openguard.core.network.CommandDto
 import com.openguard.core.network.CommandVerifyResponse
+import com.openguard.core.security.DecoyLock
 import com.openguard.core.security.DeviceAdminManager
 import com.openguard.ui.ErrorText
 import com.openguard.ui.GuardButton
@@ -73,6 +74,13 @@ fun CommandCenterScreen(
     // unknown, so their Lock button stays enabled with a hint instead.
     val adminActive = remember { DeviceAdminManager.isAdminActive(context) }
     val lockDisabled = isThisDevice && !adminActive
+    val overlayAllowed = remember { DecoyLock.hasPermission(context) }
+    // The latest lost_mode_on ack says plainly whether the phone itself
+    // got locked — surface it here, not buried in the history list.
+    val lockSkipped = state.commands
+        .filter { it.action == "lost_mode_on" }
+        .maxByOrNull { it.issuedAt ?: "" }
+        ?.result?.contains("lock skipped") == true
 
     LaunchedEffect(deviceId) { viewModel.load(deviceId) }
 
@@ -160,6 +168,17 @@ fun CommandCenterScreen(
                         (state.lostMessage?.let { " Message: “$it”" } ?: ""),
                     style = MaterialTheme.typography.bodyMedium,
                 )
+                if (lockSkipped) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "The phone itself is NOT locked — device admin " +
+                            "is not enabled on it. Enable device admin " +
+                            "in that phone's Settings so Lost Mode can " +
+                            "lock it.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
                 Spacer(Modifier.height(12.dp))
                 GuardOutlinedButton(
                     onClick = { send("lost_mode_off") },
@@ -194,6 +213,26 @@ fun CommandCenterScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (isThisDevice && !adminActive) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Device admin is not enabled on this phone, so " +
+                            "Lost Mode will show on screen but the phone " +
+                            "itself will not lock.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                if (isThisDevice && !overlayAllowed) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Tip: allow “Display over other apps” in " +
+                            "Settings so the Lost Mode screen covers the " +
+                            "whole phone right away.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
             Spacer(Modifier.height(24.dp))

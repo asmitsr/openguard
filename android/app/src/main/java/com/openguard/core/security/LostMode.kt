@@ -11,32 +11,48 @@ import com.openguard.core.common.SecurityConfig
 import com.openguard.feature.security.LostModeActivity
 
 /**
- * Lost Mode: locks the phone (when device admin is active) and shows a
- * full-screen "This phone is lost" screen with the owner's message.
+ * Lost Mode: locks the phone (when device admin is active), disables
+ * the camera (same condition), and shows the owner's message — as the
+ * decoy lock overlay when "Display over other apps" is allowed, else
+ * as a high-priority notification with a full-screen intent to
+ * LostModeActivity. Location keeps uploading while it is on.
  *
- * Honest note: Home cannot be blocked without being a launcher, so Lost
- * Mode is a deterrent + contact channel, not a kiosk lock. The phone is
- * locked and location keeps uploading while it is on.
+ * Honest note: Home cannot be blocked without being a launcher, and
+ * the overlay sits below the status bar and keyguard (platform rule),
+ * so Lost Mode is a deterrent + contact channel, not a kiosk lock.
+ * A forced restart cannot be blocked; BootReceiver re-locks after it.
  */
 object LostMode {
 
     /**
-     * Turns Lost Mode on locally. Returns the ack result string: it notes
-     * when the lock was skipped because device admin is not active.
+     * Turns Lost Mode on locally. Returns the ack result string: it
+     * notes when the lock was skipped (no device admin) and when the
+     * decoy overlay is unavailable (no overlay permission).
      */
     fun turnOn(context: Context, message: String?): String {
         LostModeStore.setOn(context, message)
         val locked = DeviceAdminManager.lockNow(context)
+        DeviceAdminManager.setCameraDisabled(context, true)
         showNotification(context)
-        return if (locked) {
-            "Lost Mode on — phone locked"
+        val decoy = DecoyLock.show(context)
+        val parts = mutableListOf<String>()
+        parts += if (locked) {
+            "phone locked"
         } else {
-            "Lost Mode on (lock skipped: device admin is not enabled)"
+            "lock skipped (device admin is not enabled)"
         }
+        parts += if (decoy) {
+            "decoy lock showing"
+        } else {
+            "overlay not allowed — message shows as notification"
+        }
+        return "Lost Mode on — " + parts.joinToString("; ")
     }
 
     fun turnOff(context: Context) {
         LostModeStore.clear(context)
+        DecoyLock.hide(context)
+        DeviceAdminManager.setCameraDisabled(context, false)
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.cancel(SecurityConfig.LOST_MODE_NOTIFICATION_ID)
     }

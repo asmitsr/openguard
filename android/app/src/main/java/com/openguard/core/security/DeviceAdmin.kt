@@ -72,6 +72,24 @@ object DeviceAdminManager {
     }
 
     /**
+     * Disables the camera for every app while Lost Mode is on. On most
+     * phones this disables the flashlight too (the torch is a camera
+     * function). False when admin is not active (or on error) — without
+     * device admin the camera cannot be disabled, so the flashlight
+     * stays reachable from quick settings.
+     */
+    fun setCameraDisabled(context: Context, disabled: Boolean): Boolean {
+        return try {
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+            if (!dpm.isAdminActive(componentName(context))) return false
+            dpm.setCameraDisabled(componentName(context), disabled)
+            true
+        } catch (e: SecurityException) {
+            false
+        }
+    }
+
+    /**
      * Factory-resets the phone, including external storage. False when
      * admin is not active (or on error). Factory Reset Protection is
      * deliberately NOT cleared (no WIPE_RESET_PROTECTION_DATA): a wiped

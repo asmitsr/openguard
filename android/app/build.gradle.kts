@@ -61,4 +61,5 @@ dependencies {
     implementation(libs.play.services.location)
     implementation(libs.maplibre.android.sdk)
     implementation(libs.androidx.security.crypto)
+    implementation(libs.androidx.savedstate)
 }

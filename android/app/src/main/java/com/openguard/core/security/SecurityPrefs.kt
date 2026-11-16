@@ -103,6 +103,15 @@ object SecurityPrefs {
         }
     }
 
+    // Power-menu guard (accessibility service): in-app toggle, default
+    // on. The service itself must also be enabled in system Settings.
+    fun isPowerMenuGuardEnabled(context: Context): Boolean =
+        securityPrefs(context).getBoolean(KEY_POWER_MENU_GUARD_ENABLED, true)
+
+    fun setPowerMenuGuardEnabled(context: Context, enabled: Boolean) {
+        securityPrefs(context).edit { putBoolean(KEY_POWER_MENU_GUARD_ENABLED, enabled) }
+    }
+
     private const val KEY_LOCATION_PERMISSION_GRANTED = "last_location_permission_granted"
     private const val KEY_LOCATION_ENABLED = "last_location_enabled"
     private const val KEY_LAST_LOW_BATTERY_EVENT_AT = "last_low_battery_event_at"
@@ -112,6 +121,7 @@ object SecurityPrefs {
     private const val KEY_EXECUTED_COMMANDS = "executed_commands"
     private const val KEY_LAST_SEEN_SUBSCRIPTION_IDS = "last_seen_subscription_ids"
     private const val KEY_TRUSTED_SUBSCRIPTION_IDS = "trusted_subscription_ids"
+    private const val KEY_POWER_MENU_GUARD_ENABLED = "power_menu_guard_enabled"
 }
 
 /**

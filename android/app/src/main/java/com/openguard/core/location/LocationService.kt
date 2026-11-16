@@ -26,9 +26,12 @@ import com.google.android.gms.location.Priority
 import com.openguard.MainActivity
 import com.openguard.OpenGuardApp
 import com.openguard.R
+import com.openguard.core.common.SecurityConfig
 import com.openguard.core.common.TrackingConfig
 import com.openguard.core.database.AppDatabase
 import com.openguard.core.database.LocationEntity
+import com.openguard.core.security.DecoyLock
+import com.openguard.core.security.LostModeStore
 import com.openguard.core.security.SecurityEvents
 import java.time.Instant
 import kotlinx.coroutines.CoroutineScope
@@ -36,6 +39,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -64,6 +68,9 @@ class LocationService : Service() {
     private lateinit var fused: FusedLocationProviderClient
     private lateinit var database: AppDatabase
     private var connectivityManager: ConnectivityManager? = null
+    // startTracking runs on every start intent; the watchdog must be
+    // launched only once per service instance.
+    private var watchdogStarted = false
 
     // Connectivity-triggered command fetch: when the network comes back,
     // poll for pending commands right away instead of waiting up to 15
@@ -168,6 +175,22 @@ class LocationService : Service() {
             TrackingState.set(true)
         } catch (e: SecurityException) {
             stopSelf()
+            return
+        }
+        // Decoy watchdog: while tracking runs, re-show the Lost Mode
+        // decoy overlay if it was dismissed (e.g. the process restarted
+        // or the overlay was removed). Cheap: one prefs read per tick.
+        // Dies with the service scope in onDestroy.
+        if (!watchdogStarted) {
+            watchdogStarted = true
+            scope.launch {
+                while (true) {
+                    if (LostModeStore.isOn(applicationContext)) {
+                        DecoyLock.ensureShown(applicationContext)
+                    }
+                    delay(SecurityConfig.DECOY_WATCHDOG_INTERVAL_MS)
+                }
+            }
         }
     }
 

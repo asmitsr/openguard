@@ -785,3 +785,63 @@ anywhere in the code.
 Auth endpoints 10/min/IP (includes step-up and recover); location upload
 120/min/device; command creation 20/min/user; erase 1/hour/user.
 Documented in `src/lib/ratelimit.ts`.
+
+## Decoy Lock round (17 Nov 2026)
+
+Fake lock screen + power-menu PIN guard + boot re-lock. Android only;
+no backend change, no migration, no Worker deploy.
+
+- Decoy lock screen (`core/security/DecoyLock.kt`): full-screen
+  TYPE_APPLICATION_OVERLAY shown when Lost Mode is on. Looks like a lock
+  screen with a 4-digit PIN pad; any code shows "Wrong PIN — try again"
+  and never unlocks. Shows "This phone is lost" + the owner's message
+  immediately (no tap needed). Swallows all touches, survives Home
+  (system window), swallows Back. Owner exit: long-press the shield
+  icon (no visible hint) -> LostModeActivity -> "I found my phone" ->
+  device credential confirm -> server lost_mode_off + local clear.
+  Remote exit: lost_mode_off command hides the overlay. Fallback when
+  the overlay permission is denied: notification + LostModeActivity,
+  exactly as before; the ack + Settings + Command Center say so.
+- Re-show watchdogs (3 layers): LocationService loop every 30s while
+  tracking runs; UploadWorker backstop every run; OnAttachStateChange
+  listener re-adds 500ms after an unexpected detach. LostModeActivity
+  .onDestroy re-shows the decoy if Lost Mode is still on.
+- Boot receiver (`BootReceiver.kt`): BOOT_COMPLETED -> if Lost Mode is
+  on, re-show the decoy. Fires after unlock (CE storage unavailable
+  before), so there is a short post-reboot window until first unlock.
+- Camera/flashlight: turnOn sets DevicePolicyManager.setCameraDisabled
+  (true); turnOff re-enables. Admin-only. This is the main flashlight
+  defense (torch rides the camera HAL on most phones).
+- Power-menu PIN guard (`PowerMenuGuardService.kt`, accessibility):
+  receives only TYPE_WINDOW_STATE_CHANGED; acts only when Lost Mode is
+  on AND the in-app toggle is on AND the event is com.android.systemui
+  with class containing GlobalActions or PowerMenu. On match:
+  GLOBAL_ACTION_BACK dismisses the menu + DecoyLock.show(). Reads only
+  package/class names, never screen text (canRetrieveWindowContent is
+  false). Settings has guided setup, a Switch to pause the guard, and
+  the honest 10-second-hold limit.
+- Device-admin prominence: Settings copy states admin unlocks Lock,
+  Lost Mode locking and remote erase; Command Center shows a plain red
+  "lock skipped" warning when Lost Mode is on without admin, and an
+  overlay tip when the overlay permission is missing.
+- New dependency: androidx.savedstate:savedstate:1.2.1 (a ComposeView
+  outside an activity needs both view-tree owners).
+
+Honest limits (docs-verified): TYPE_APPLICATION_OVERLAY sits BELOW
+critical system windows (status bar, IME), so the notification shade /
+quick settings CANNOT be blocked by the overlay and the overlay does not
+show over the keyguard — LostModeActivity remains the surface on a
+locked phone. The power menu is not covered by the overlay; the
+accessibility guard dismisses it. Detection is OEM-fragile (Infinix XOS
+may name the power-menu window differently than AOSP's
+GlobalActionsDialog) — must be tested on the real phone. Holding power
+~10s forces a hardware restart no software can block; the boot receiver
+is the mitigation. The overlay dies with the app process; the three
+watchdogs re-show it. All three grants (device admin, draw over other
+apps, accessibility) are user grants; with none of them, Lost Mode is
+the notification + LostModeActivity fallback. Minor: the backspace key
+uses the U+232B glyph; if it renders as tofu on the Infinix, swap it
+for "DEL" (one string change in DecoyLock.kt).
+
+Deploy: push the 17 Android files (list in the round report) + this
+file; CI builds the APK. No DB or Worker step.

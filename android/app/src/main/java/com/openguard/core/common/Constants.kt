@@ -80,4 +80,8 @@ object SecurityConfig {
 
     /** At most one offline-transition event per period (a flapping connection must not spam). */
     const val OFFLINE_EVENT_COOLDOWN_MS = 60 * 60 * 1000L
+
+    // ---- Decoy lock round ----
+    /** How often the tracking service re-shows the decoy overlay if it was dismissed. */
+    const val DECOY_WATCHDOG_INTERVAL_MS = 30_000L
 }

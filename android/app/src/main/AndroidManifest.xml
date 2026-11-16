@@ -24,6 +24,12 @@
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <!-- Lost Mode shows its screen over the lock screen via full-screen intent. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- Decoy lock: draws the Lost Mode screen over every app. The user
+         grants this in Settings ("Display over other apps"); without it
+         Lost Mode falls back to the notification + LostModeActivity. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Boot receiver: Lost Mode comes back after a reboot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:name=".OpenGuardApp"
@@ -86,6 +92,30 @@
                 <action android:name="android.telephony.action.SIM_CARD_STATE_CHANGED" />
             </intent-filter>
         </receiver>
+
+        <receiver
+            android:name=".core.security.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Power-menu guard: dismisses the system power menu while Lost
+             Mode is on. The user enables it in Accessibility settings;
+             it watches only for the power menu window and reads no
+             screen content (see accessibility_service_config). -->
+        <service
+            android:name=".core.security.PowerMenuGuardService"
+            android:exported="true"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
     </application>
 
 </manifest>
