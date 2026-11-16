@@ -59,6 +59,8 @@ object SimMonitor {
         )
         SecurityPrefs.setLastSeenSubscriptionIds(context, current)
         postSimChangedNotification(context)
+        // Trusted-contact alert (owner toggle, default on): one SMS per hour.
+        TrustedAlerts.onSimChanged(context, isTrusted)
         // SIM removed (no active subscription left, where one was seen
         // before) while Lost Mode is on: arm chaos mode. Only the flag
         // is set here — the chaos timer runs from the tracking

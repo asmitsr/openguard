@@ -15,6 +15,14 @@ export interface Device {
   network_type?: string | null
   location_permission?: string | null
   location_enabled?: boolean | null
+  // Device health (heartbeat, migration 006). Null = never reported.
+  storage_total_bytes?: number | null
+  storage_free_bytes?: number | null
+  ram_total_bytes?: number | null
+  ram_free_bytes?: number | null
+  battery_temperature_c?: number | null
+  booted_at?: string | null
+  notifications_enabled?: boolean | null
   _latest?: Location | null
 }
 
@@ -50,6 +58,20 @@ export interface SecurityEvent {
   event_type: string
   created_at: string
   confirmed?: boolean
+}
+
+export interface EvidenceClip {
+  id: string
+  device_id: string
+  recorded_at: string
+  camera: 'front' | 'back' | 'audio'
+  duration_s: number
+  size_bytes: number
+  storage: 'local' | 'drive'
+  drive_file_id?: string | null
+  drive_link?: string | null
+  uploaded_at?: string | null
+  created_at?: string | null
 }
 
 export interface Session {

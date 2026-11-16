@@ -2,6 +2,7 @@ package com.openguard
 
 import android.app.Application
 import com.openguard.core.database.AppDatabase
+import com.openguard.core.evidence.EvidenceApi
 import com.openguard.core.location.UploadWorker
 import com.openguard.core.network.ApiClient
 import com.openguard.core.network.ApiService
@@ -28,7 +29,11 @@ class OpenGuardApp : Application() {
         private set
 
     /** Lazy: ApiClient fails fast if API_BASE_URL is still the placeholder. */
-    val api: ApiService by lazy { ApiClient(tokenStore).api }
+    private val apiClient by lazy { ApiClient(tokenStore) }
+
+    val api: ApiService by lazy { apiClient.api }
+
+    val evidenceApi: EvidenceApi by lazy { apiClient.evidenceApi }
 
     val authRepository: AuthRepository by lazy { AuthRepository(api, tokenStore) }
 

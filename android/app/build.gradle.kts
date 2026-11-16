@@ -15,6 +15,11 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1.0"
+        // AppAuth OAuth redirect scheme: the Drive sign-in redirect URI
+        // is com.openguard:/oauth2redirect (see DriveAuth). AppAuth's
+        // library manifest declares its redirect receiver activity
+        // against this placeholder, so no manifest entry is needed.
+        manifestPlaceholders["appAuthRedirectScheme"] = "com.openguard"
     }
 
     buildTypes {
@@ -63,4 +68,13 @@ dependencies {
     implementation(libs.maplibre.android.sdk)
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.savedstate)
+
+    // Evidence (Lost Mode only): CameraX video recording + AppAuth
+    // OAuth for Google Drive uploads. No camera-view: recording runs
+    // without a preview.
+    implementation(libs.androidx.camera.core)
+    implementation(libs.androidx.camera.camera2)
+    implementation(libs.androidx.camera.lifecycle)
+    implementation(libs.androidx.camera.video)
+    implementation(libs.appauth)
 }

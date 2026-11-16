@@ -8,6 +8,7 @@ import {
   type AuditEvent,
   type Command,
   type Device,
+  type EvidenceClip,
   type Location,
   type PrivacyInfo,
   type SecurityEvent,
@@ -15,6 +16,7 @@ import {
 } from './api'
 import AuthView from './AuthView'
 import DevicesPanel from './DevicesPanel'
+import EvidencePanel from './EvidencePanel'
 import MapPanel from './MapPanel'
 import HistoryPanel from './HistoryPanel'
 import CommandPanel from './CommandPanel'
@@ -34,6 +36,8 @@ export default function App() {
   const [commandsErr, setCommandsErr] = useState('')
   const [alerts, setAlerts] = useState<SecurityEvent[]>([])
   const [alertsErr, setAlertsErr] = useState('')
+  const [evidence, setEvidence] = useState<EvidenceClip[]>([])
+  const [evidenceErr, setEvidenceErr] = useState('')
   const [sessions, setSessions] = useState<Session[] | null>(null)
   const [sessionsErr, setSessionsErr] = useState('')
   const [recoveryCount, setRecoveryCount] = useState<number | null | undefined>(undefined)
@@ -105,6 +109,18 @@ export default function App() {
     }
   }
 
+  async function loadEvidence() {
+    const id = selectedRef.current
+    if (!id) return
+    try {
+      const data = await api<{ clips: EvidenceClip[] }>('/devices/' + id + '/evidence?limit=50')
+      setEvidence(data.clips || [])
+      setEvidenceErr('')
+    } catch (e) {
+      setEvidenceErr((e as Error).message)
+    }
+  }
+
   async function loadSessions() {
     try {
       setSessions(await api<Session[]>('/auth/sessions'))
@@ -150,6 +166,7 @@ export default function App() {
     loadHistory(false)
     loadCommands()
     loadAlerts()
+    loadEvidence()
   }
 
   async function logout() {
@@ -173,6 +190,16 @@ export default function App() {
     loadPrivacy()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed])
+
+  // Near-live evidence: poll the clip list every 30 seconds while a
+  // device is selected, so a requested capture shows up shortly after
+  // the phone records and uploads it. Never real-time.
+  useEffect(() => {
+    if (!authed || !selected) return
+    const t = setInterval(() => loadEvidence(), 30000)
+    return () => clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authed, selected])
 
   const selDevice = (devices || []).find((d) => d.id === selected) || null
 
@@ -233,6 +260,15 @@ export default function App() {
               />
               <AlertsPanel deviceName={selDevice ? selDevice.name : ''} events={alerts} listErr={alertsErr} />
             </div>
+            <EvidencePanel
+              device={selDevice}
+              clips={evidence}
+              listErr={evidenceErr}
+              onChanged={() => {
+                loadEvidence()
+                loadCommands()
+              }}
+            />
             <div className="grid">
               <SessionsPanel sessions={sessions} listErr={sessionsErr} onChanged={loadSessions} />
               <RecoveryPanel count={recoveryCount} onCount={setRecoveryCount} />

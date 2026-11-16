@@ -8,6 +8,7 @@ import android.content.Intent
 import androidx.core.app.NotificationCompat
 import com.openguard.R
 import com.openguard.core.common.SecurityConfig
+import com.openguard.core.evidence.EvidenceService
 import com.openguard.core.location.LocationService
 import com.openguard.feature.security.LostModeActivity
 
@@ -16,7 +17,9 @@ import com.openguard.feature.security.LostModeActivity
  * the camera (same condition), and shows the owner's message — as the
  * decoy lock overlay when "Display over other apps" is allowed, else
  * as a high-priority notification with a full-screen intent to
- * LostModeActivity. Location keeps uploading while it is on.
+ * LostModeActivity. Location keeps uploading while it is on, and
+ * EvidenceService records short clips (audio-only while the camera is
+ * disabled by admin).
  *
  * Honest note: Home cannot be blocked without being a launcher, and
  * the overlay sits below the status bar and keyguard (platform rule),
@@ -59,6 +62,20 @@ object LostMode {
             // While-in-use location check (background location revoked).
             false
         }
+        // Evidence (Workstream A): short clips while Lost Mode is on.
+        // Same background-start rules as tracking (the decoy overlay
+        // grant is the exemption); a denied start leaves Lost Mode on,
+        // and the periodic worker retries the start while Lost Mode
+        // stays on. The service itself stops when the microphone
+        // permission is missing — there is nothing to record then.
+        val evidenceStarted = try {
+            EvidenceService.start(context)
+            true
+        } catch (e: IllegalStateException) {
+            false
+        } catch (e: SecurityException) {
+            false
+        }
         val parts = mutableListOf<String>()
         parts += if (locked) {
             "phone locked"
@@ -75,6 +92,11 @@ object LostMode {
         } else {
             "tracking start denied (theft response waits for tracking)"
         }
+        parts += if (evidenceStarted) {
+            "evidence recording"
+        } else {
+            "evidence start denied (needs microphone permission)"
+        }
         return "Lost Mode on — " + parts.joinToString("; ")
     }
 
@@ -89,6 +111,8 @@ object LostMode {
         // service is not running.
         SecurityPrefs.setChaosModeActive(context, false)
         RingService.stop(context)
+        // Evidence records only while Lost Mode is on: stop it now.
+        EvidenceService.stop(context)
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.cancel(SecurityConfig.LOST_MODE_NOTIFICATION_ID)
     }

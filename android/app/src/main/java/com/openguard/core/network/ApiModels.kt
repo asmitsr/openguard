@@ -55,6 +55,15 @@ data class DeviceDto(
     @SerializedName("lost_message") val lostMessage: String? = null,
     @SerializedName("location_permission") val locationPermission: String? = null,
     @SerializedName("location_enabled") val locationEnabled: Boolean? = null,
+    // Device health (heartbeat, migration 006). Null = never reported
+    // (older app version, or no heartbeat since the columns landed).
+    @SerializedName("storage_total_bytes") val storageTotalBytes: Long? = null,
+    @SerializedName("storage_free_bytes") val storageFreeBytes: Long? = null,
+    @SerializedName("ram_total_bytes") val ramTotalBytes: Long? = null,
+    @SerializedName("ram_free_bytes") val ramFreeBytes: Long? = null,
+    @SerializedName("battery_temperature_c") val batteryTemperatureC: Float? = null,
+    @SerializedName("booted_at") val bootedAt: String? = null,
+    @SerializedName("notifications_enabled") val notificationsEnabled: Boolean? = null,
 )
 
 data class RegisterDeviceRequest(
@@ -109,6 +118,15 @@ data class HeartbeatRequest(
     // Phase 2, optional: "all" | "foreground" | "none".
     @SerializedName("location_permission") val locationPermission: String? = null,
     @SerializedName("location_enabled") val locationEnabled: Boolean? = null,
+    // Device health, all optional (migration 006). Absent fields leave
+    // the stored values untouched server-side.
+    @SerializedName("storage_total_bytes") val storageTotalBytes: Long? = null,
+    @SerializedName("storage_free_bytes") val storageFreeBytes: Long? = null,
+    @SerializedName("ram_total_bytes") val ramTotalBytes: Long? = null,
+    @SerializedName("ram_free_bytes") val ramFreeBytes: Long? = null,
+    @SerializedName("battery_temperature_c") val batteryTemperatureC: Float? = null,
+    @SerializedName("booted_at") val bootedAt: String? = null,
+    @SerializedName("notifications_enabled") val notificationsEnabled: Boolean? = null,
 )
 
 data class DeleteAccountRequest(

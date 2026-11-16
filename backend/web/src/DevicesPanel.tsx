@@ -2,6 +2,30 @@ import { useRef, useState } from 'react'
 import { api, type Device } from './api'
 import { relTime } from './util'
 
+// Device health (heartbeat): true when the device reported any health
+// field. Older app versions report none, so the block stays hidden.
+function hasHealth(d: Device): boolean {
+  return (
+    d.storage_total_bytes != null ||
+    d.ram_total_bytes != null ||
+    d.battery_temperature_c != null ||
+    d.booted_at != null ||
+    d.notifications_enabled != null
+  )
+}
+
+/** Bytes as "12.4 GB" / "850 MB", one decimal, no trailing ".0". */
+function fmtBytes(bytes: number): string {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let v = bytes
+  let u = 0
+  while (v >= 1024 && u < units.length - 1) {
+    v /= 1024
+    u++
+  }
+  return v.toFixed(1).replace(/\.0$/, '') + ' ' + units[u]
+}
+
 export default function DevicesPanel({
   devices,
   selected,
@@ -101,6 +125,24 @@ export default function DevicesPanel({
                 {d.location_permission ? ' · Location permission: ' + d.location_permission : ''}
                 {d.location_enabled != null ? ' · Location ' + (d.location_enabled ? 'on' : 'off') : ''}
               </span>
+              {d.id === selected && hasHealth(d) && (
+                <>
+                  <br />
+                  <span className="muted">
+                    {d.storage_free_bytes != null && d.storage_total_bytes != null
+                      ? 'Storage ' + fmtBytes(d.storage_free_bytes) + ' free of ' + fmtBytes(d.storage_total_bytes)
+                      : ''}
+                    {d.ram_free_bytes != null && d.ram_total_bytes != null
+                      ? ' · RAM ' + fmtBytes(d.ram_free_bytes) + ' free of ' + fmtBytes(d.ram_total_bytes)
+                      : ''}
+                    {d.battery_temperature_c != null ? ' · Battery temp ' + d.battery_temperature_c.toFixed(1) + '°C' : ''}
+                    {d.booted_at ? ' · Last boot ' + relTime(d.booted_at) : ''}
+                    {d.notifications_enabled != null
+                      ? ' · Notifications ' + (d.notifications_enabled ? 'allowed' : 'blocked')
+                      : ''}
+                  </span>
+                </>
+              )}
               <br />
               <button
                 className="link"

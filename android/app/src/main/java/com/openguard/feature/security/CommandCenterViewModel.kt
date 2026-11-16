@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.openguard.core.common.Result
 import com.openguard.core.network.CommandDto
 import com.openguard.core.network.CommandVerifyResponse
+import com.openguard.core.network.DeviceDto
 import com.openguard.feature.auth.AuthRepository
 import com.openguard.feature.devices.DeviceRepository
 import java.time.Instant
@@ -15,6 +16,9 @@ import kotlinx.coroutines.launch
 
 data class CommandCenterUiState(
     val commands: List<CommandDto> = emptyList(),
+    // The device row feeds the device card + Device Information
+    // section (battery, model, OS, network, location state).
+    val device: DeviceDto? = null,
     val lostMode: Boolean = false,
     val lostMessage: String? = null,
     val isOnline: Boolean = false,
@@ -37,17 +41,30 @@ class CommandCenterViewModel(
 
     /** Loads the command history + the device's current lost-mode and online state. */
     fun load(deviceId: String) {
+        refresh(deviceId, showLoading = true)
+    }
+
+    /** Silent refresh while the screen stays open (polling loop). */
+    fun poll(deviceId: String) {
+        refresh(deviceId, showLoading = false)
+    }
+
+    private fun refresh(deviceId: String, showLoading: Boolean) {
         viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true, error = null)
+            if (showLoading) _state.value = _state.value.copy(isLoading = true, error = null)
             val commandsResult = commands.listCommands(deviceId)
             val devicesResult = devices.listDevices()
             val device = (devicesResult as? Result.Success)?.value?.find { it.id == deviceId }
             _state.value = when (commandsResult) {
-                is Result.Success -> CommandCenterUiState(
+                is Result.Success -> _state.value.copy(
                     commands = commandsResult.value,
+                    device = device,
                     lostMode = device?.lostMode == true,
                     lostMessage = device?.lostMessage,
                     isOnline = device?.lastSeenAt?.let { isOnline(it) } == true,
+                    isLoading = false,
+                    sending = null,
+                    error = null,
                 )
                 is Result.Error -> _state.value.copy(
                     isLoading = false,
@@ -58,10 +75,11 @@ class CommandCenterViewModel(
         }
     }
 
-    fun send(deviceId: String, action: String, message: String? = null) {
+    /** Sends one command; payload values are strings (see CommandRepository). */
+    fun send(deviceId: String, action: String, payload: Map<String, String>? = null) {
         viewModelScope.launch {
             _state.value = _state.value.copy(sending = action, error = null)
-            when (val result = commands.createCommand(deviceId, action, message)) {
+            when (val result = commands.createCommand(deviceId, action, payload)) {
                 is Result.Success -> load(deviceId)
                 is Result.Error -> _state.value = _state.value.copy(
                     sending = null,

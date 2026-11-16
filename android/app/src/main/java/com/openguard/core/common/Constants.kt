@@ -84,4 +84,19 @@ object SecurityConfig {
     // ---- Decoy lock round ----
     /** How often the tracking service re-shows the decoy overlay if it was dismissed. */
     const val DECOY_WATCHDOG_INTERVAL_MS = 30_000L
+
+    // ---- Trusted recovery contacts (SMS alerts) ----
+    /** At most one SMS per alert type per period — SMS costs the user money. */
+    const val TRUSTED_ALERT_COOLDOWN_MS = 60 * 60 * 1000L
+
+    /** The offline alert fires once a gap longer than this is seen on reconnect. */
+    const val TRUSTED_ALERT_OFFLINE_GAP_MS = 60 * 60 * 1000L
+
+    // ---- Workstream B: Remote Control Center ----
+    /** Bluetooth enable prompt (Android 13+ needs the holder to accept). */
+    const val BLUETOOTH_CHANNEL_ID = "openguard-bluetooth"
+    const val BLUETOOTH_NOTIFICATION_ID = 7
+
+    /** TTS init + speak must finish within this, or the command times out. */
+    const val TTS_SPEAK_TIMEOUT_MS = 45_000L
 }

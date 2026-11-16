@@ -172,6 +172,31 @@ object SecurityPrefs {
         securityPrefs(context).edit { putBoolean(KEY_CHAOS_MODE_ACTIVE, active) }
     }
 
+    // Trusted contact alerts (Workstream C): which recovery alerts go by
+    // SMS to the trusted number. Keys MUST match TrustedAlerts, which
+    // reads the same keys directly (trusted_alert_<type>). Defaults:
+    // SIM change on, offline + low battery off.
+    fun isTrustedAlertSimChangeEnabled(context: Context): Boolean =
+        securityPrefs(context).getBoolean(KEY_TRUSTED_ALERT_SIM_CHANGE, true)
+
+    fun setTrustedAlertSimChangeEnabled(context: Context, enabled: Boolean) {
+        securityPrefs(context).edit { putBoolean(KEY_TRUSTED_ALERT_SIM_CHANGE, enabled) }
+    }
+
+    fun isTrustedAlertOfflineEnabled(context: Context): Boolean =
+        securityPrefs(context).getBoolean(KEY_TRUSTED_ALERT_OFFLINE, false)
+
+    fun setTrustedAlertOfflineEnabled(context: Context, enabled: Boolean) {
+        securityPrefs(context).edit { putBoolean(KEY_TRUSTED_ALERT_OFFLINE, enabled) }
+    }
+
+    fun isTrustedAlertLowBatteryEnabled(context: Context): Boolean =
+        securityPrefs(context).getBoolean(KEY_TRUSTED_ALERT_LOW_BATTERY, false)
+
+    fun setTrustedAlertLowBatteryEnabled(context: Context, enabled: Boolean) {
+        securityPrefs(context).edit { putBoolean(KEY_TRUSTED_ALERT_LOW_BATTERY, enabled) }
+    }
+
     private const val KEY_LOCATION_PERMISSION_GRANTED = "last_location_permission_granted"
     private const val KEY_LOCATION_ENABLED = "last_location_enabled"
     private const val KEY_LAST_LOW_BATTERY_EVENT_AT = "last_low_battery_event_at"
@@ -186,6 +211,9 @@ object SecurityPrefs {
     private const val KEY_TRUSTED_NUMBER = "trusted_number"
     private const val KEY_AUTO_CALL_ENABLED = "auto_call_enabled"
     private const val KEY_CHAOS_MODE_ACTIVE = "chaos_mode_active"
+    private const val KEY_TRUSTED_ALERT_SIM_CHANGE = "trusted_alert_sim_change"
+    private const val KEY_TRUSTED_ALERT_OFFLINE = "trusted_alert_offline"
+    private const val KEY_TRUSTED_ALERT_LOW_BATTERY = "trusted_alert_low_battery"
 }
 
 /**

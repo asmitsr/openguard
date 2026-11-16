@@ -3,6 +3,7 @@ import dashboardHtml from '../web/dist/index.html'
 import auth from './routes/auth'
 import commands from './routes/commands'
 import devices from './routes/devices'
+import evidence from './routes/evidence'
 import locations from './routes/locations'
 import misc from './routes/misc'
 import type { Env } from './lib/db'
@@ -17,6 +18,7 @@ app.get('/api/v1/health', (c) => c.json({ ok: true }))
 app.route('/api/v1/auth', auth)
 app.route('/api/v1/devices', devices)
 app.route('/api/v1/devices', locations)
+app.route('/api/v1/devices', evidence)
 app.route('/api/v1', commands)
 app.route('/api/v1', misc)
 

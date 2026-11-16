@@ -953,3 +953,77 @@ returned by any endpoint).
 Deploy order: (1) apply 005 in the Neon SQL Editor (paste, no file
 import); (2) rebuild web, then the Worker bundle, then cf.py deploy;
 (3) push the 23 files + BUILD_NOTES.md + AlertsPanel.tsx via Codespace.
+
+## Evidence + Remote Control Center round (17 Nov 2026, 01:13–01:28) + launcher icon
+
+Coordinator-built, parent-verified (tsc green backend + web, Vite build
+reproduces dist/index.html 259.38 kB, brace scan 0 issues on all 77 .kt
+files, no JsonObject DTOs, no secrets, no foundation-text). 64 files +
+14 launcher-icon files. Migration 006 applied 01:42 (evidence_clips
+table, commands CHECK v3 with 19 actions, 7 device-health columns);
+Worker redeployed after the migration (bundle 561,929 bytes).
+
+Evidence (Lost Mode ONLY): EvidenceService (FGS camera+microphone)
+records 12s clips with audio, front/back alternating (never
+simultaneous), every 2/5 min (default 5, Settings). Admin-disabled
+camera falls back to audio-only clips (metadata says so). Clips live
+in app-private storage (cap newest 50 / 500 MB, oldest deleted first);
+EvidenceUploadWorker uploads to the owner's Google Drive (resumable,
+drive.file scope, AppAuth 0.11.1 + PKCE, refresh token encrypted
+on-device only) then posts metadata; Drive not connected -> metadata
+posted as storage "local". "Capture now" command records + uploads at
+once; dashboard polls metadata every 30s (near-live ~15-30s, never
+called real-time; no WebRTC — later phase). Drive OAuth client ID is
+a placeholder (REPLACE_ME) until the user creates a Google Cloud
+OAuth client (Desktop app type) on his phone — see the coordinator
+report for the exact steps. Server: evidence_clips table + POST/GET
+/devices/:id/evidence (metadata only — no media bytes through the
+Worker; Workers Free 10 ms CPU).
+
+Remote Control Center (14 new commands, all server-validated):
+set_volume, set_brightness, set_auto_brightness, torch_on/off,
+set_ringer_mode, set_dnd, set_screen_timeout, set_auto_rotate,
+speak_message (TTS), wake_screen, set_wallpaper, bluetooth_on
+(best-effort only — Android 13+ shows a system dialog; silent enable
+is impossible for a regular app), evidence_capture. Torch is
+unavailable while Lost Mode has the camera disabled (ack says so).
+NOT built (impossible for a regular app): WiFi on/off, mobile data,
+airplane mode, GPS/NFC toggles, screenshot, set device PIN,
+disable/uninstall apps, background clipboard, power-on,
+post-factory-reset tracking. Control Center UI per the user's mockup;
+Restart tile disabled with * footnote (Device Owner only); Vault tile
+placeholder "Coming soon" (Phase 4).
+
+Health + Timeline + Trusted Contacts: heartbeat carries storage, RAM,
+battery temperature, last boot, notification grant (persisted with
+COALESCE — old app versions keep working); Health screen + dashboard
+health block. Security Timeline screen (all 8 event types,
+newest-first) closes the dashboard-only gap. Trusted Recovery
+Contacts: SMS alerts to the trusted number (SIM change ON by default,
+offline + low battery OFF; max 1/hour/type; offline alert fires on
+reconnect after a >1h gap). SMS cost falls on the app user via their
+own SIM.
+
+Uninstall flow: Settings "Uninstall" removes our own device admin
+(DevicePolicyManager.removeActiveAdmin — an app CAN remove its own
+admin; recorded as an admin_disabled security event) then opens the
+system uninstall confirm (ACTION_DELETE). A thief still cannot delete
+the app from the home screen — only the owner, from inside Settings.
+
+Launcher icon (user-made logo, 01:38): logo.png at the repo root
+(2048x2048, phone + shield/lock + pin + "OpenGuard" + "TRACK • LOCK
+• RECOVER"). LAUNCHER ICON ONLY — never inside the app (no
+splash/dashboard); he will give a separate in-app logo if needed.
+Generated all densities (mipmap mdpi-xxxhdpi ic_launcher +
+ic_launcher_round, adaptive XML anydpi-v26, foreground 432px);
+manifest icon/roundIcon refs added. The logo says "OpenGuard", so
+the app name stays OpenGuard unless he says otherwise.
+
+Honest limits: Drive disconnected until the OAuth setup is done
+(clips stay on-device, metadata posts as local). Duration in metadata
+is the requested 12s, not measured. A pruned clip stays listed as "on
+device" though the file is gone (Drive copies survive). Wallpaper
+replaces the previous wallpaper and cannot be restored. TTS speaks at
+max media volume and leaves it there. Wake screen does not unlock the
+keyguard. Health data appears only after a device heartbeats with the
+new build AND 006 is applied.

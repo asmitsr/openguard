@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -34,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +50,9 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.openguard.R
+import com.openguard.core.control.RemoteControls
+import com.openguard.core.evidence.DriveAuth
+import com.openguard.core.evidence.EvidencePrefs
 import com.openguard.core.location.LocationService
 import com.openguard.core.location.PushTopicStore
 import com.openguard.core.location.TrackingPermissions
@@ -64,6 +69,7 @@ import com.openguard.ui.ErrorText
 import com.openguard.ui.GuardOutlinedButton
 import com.openguard.ui.GuardTopBar
 import com.openguard.ui.SectionHeader
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(
@@ -132,6 +138,57 @@ fun SettingsScreen(
                 PackageManager.PERMISSION_GRANTED
     }
     val hasSmsSecret = remember(tick) { SmsSecretStore.hasSecret(context) }
+
+    // Evidence (Lost Mode only): recording interval + Drive connection.
+    var evidenceInterval by remember(tick) {
+        mutableStateOf(EvidencePrefs.intervalMinutes(context))
+    }
+    var driveConnected by remember(tick) { mutableStateOf(DriveAuth.isConnected(context)) }
+    var driveResult by remember { mutableStateOf<String?>(null) }
+    val driveConfigured = DriveAuth.isConfigured()
+    val hasCamera = remember(tick) { RemoteControls.cameraGranted(context) }
+    val hasMic = remember(tick) {
+        ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+    val evidencePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { tick++ }
+    val scope = rememberCoroutineScope()
+    val driveSignInLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        scope.launch {
+            if (DriveAuth.handleSignInResponse(context, result.data)) {
+                driveConnected = true
+                driveResult = "Google Drive connected."
+            } else {
+                driveResult = "Could not connect Google Drive."
+            }
+            tick++
+        }
+    }
+
+    // Remote controls: grant status, refreshed on resume.
+    val writeSettingsGranted = remember(tick) { RemoteControls.canWriteSettings(context) }
+    val dndGranted = remember(tick) { RemoteControls.dndAccessGranted(context) }
+    val btGranted = remember(tick) { RemoteControls.bluetoothConnectGranted(context) }
+    val btLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { tick++ }
+
+    // Trusted contact alerts: which recovery alerts go by SMS to the
+    // trusted number (defaults: SIM change on, offline + low battery off).
+    val hasTrustedNumber = remember(tick) { SecurityPrefs.trustedNumber(context) != null }
+    var trustedAlertSim by remember(tick) {
+        mutableStateOf(SecurityPrefs.isTrustedAlertSimChangeEnabled(context))
+    }
+    var trustedAlertOffline by remember(tick) {
+        mutableStateOf(SecurityPrefs.isTrustedAlertOfflineEnabled(context))
+    }
+    var trustedAlertLowBattery by remember(tick) {
+        mutableStateOf(SecurityPrefs.isTrustedAlertLowBatteryEnabled(context))
+    }
 
     Scaffold(
         topBar = { GuardTopBar(title = "Settings", onBack = onBack) },
@@ -239,6 +296,29 @@ fun SettingsScreen(
                     iconRes = R.drawable.ic_lock,
                 )
             }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "To uninstall OpenGuard, use Uninstall in Settings below — " +
+                    "Android blocks uninstall while device admin is active.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+
+            Spacer(Modifier.height(24.dp))
+            SectionHeader(iconRes = R.drawable.ic_trash_2, title = "Uninstall")
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "OpenGuard cannot be uninstalled while device admin is " +
+                    "active — that is what stops a thief deleting the app " +
+                    "from the home screen. This button removes device " +
+                    "admin first, then opens the system uninstall prompt.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(12.dp))
+            GuardOutlinedButton(
+                onClick = { DeviceAdminManager.uninstall(context) },
+                text = "Uninstall OpenGuard",
+                iconRes = R.drawable.ic_trash_2,
+            )
 
             Spacer(Modifier.height(24.dp))
             SectionHeader(iconRes = R.drawable.ic_lock, title = "Lost Mode screen")
@@ -262,6 +342,205 @@ fun SettingsScreen(
                     onClick = { activity?.let { DecoyLock.requestPermission(it) } },
                     text = "Allow display over other apps",
                     iconRes = R.drawable.ic_shield,
+                )
+            }
+
+            Spacer(Modifier.height(24.dp))
+            SectionHeader(iconRes = R.drawable.ic_camera, title = "Evidence (Lost Mode only)")
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "While Lost Mode is on, OpenGuard records a short " +
+                    "12-second clip (video + audio) every few minutes " +
+                    "and uploads it to your Google Drive. The camera " +
+                    "and microphone indicators always show while " +
+                    "recording — nothing is hidden. Without a Drive " +
+                    "connection, clips stay on this phone. The phone " +
+                    "keeps at most the newest 50 clips or 500 MB; " +
+                    "oldest clips are deleted first.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Record a clip every 2 minutes (otherwise every 5)",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(
+                    checked = evidenceInterval == 2,
+                    onCheckedChange = {
+                        evidenceInterval = if (it) 2 else 5
+                        EvidencePrefs.setIntervalMinutes(context, evidenceInterval)
+                    },
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                if (hasCamera && hasMic) {
+                    "Camera and Microphone are allowed — Lost Mode " +
+                        "records video + audio clips."
+                } else if (hasMic) {
+                    "Microphone is allowed but Camera is not — clips " +
+                        "are audio-only."
+                } else {
+                    "Allow Camera and Microphone so Lost Mode can " +
+                        "record evidence. Without Camera, clips are " +
+                        "audio-only. Without Microphone, no evidence " +
+                        "is recorded."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (!hasCamera || !hasMic) {
+                Spacer(Modifier.height(12.dp))
+                GuardOutlinedButton(
+                    onClick = {
+                        evidencePermissionLauncher.launch(
+                            arrayOf(
+                                Manifest.permission.CAMERA,
+                                Manifest.permission.RECORD_AUDIO,
+                            ),
+                        )
+                    },
+                    text = "Allow camera and microphone",
+                    iconRes = R.drawable.ic_camera,
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                if (!driveConfigured) {
+                    "Google Drive is not set up yet — the OAuth " +
+                        "client ID has not been added (see the setup " +
+                        "guide)."
+                } else if (driveConnected) {
+                    "Google Drive is connected — clips upload to " +
+                        "your \"OpenGuard Evidence\" folder."
+                } else {
+                    "Google Drive is not connected — clips stay on " +
+                        "this phone until you connect it."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (driveConfigured && !driveConnected) {
+                Spacer(Modifier.height(12.dp))
+                GuardOutlinedButton(
+                    onClick = {
+                        DriveAuth.createSignInIntent(context)?.let {
+                            driveSignInLauncher.launch(it)
+                        } ?: run {
+                            driveResult = "Could not start Google sign-in."
+                        }
+                    },
+                    text = "Connect Google Drive",
+                )
+            }
+            if (driveConfigured && driveConnected) {
+                Spacer(Modifier.height(12.dp))
+                GuardOutlinedButton(
+                    onClick = {
+                        scope.launch {
+                            DriveAuth.disconnect(context)
+                            driveConnected = false
+                            driveResult = "Google Drive disconnected."
+                            tick++
+                        }
+                    },
+                    text = "Disconnect Google Drive",
+                    iconRes = R.drawable.ic_log_out,
+                )
+            }
+            driveResult?.let { result ->
+                Spacer(Modifier.height(8.dp))
+                Text(result, style = MaterialTheme.typography.bodyMedium)
+            }
+
+            Spacer(Modifier.height(24.dp))
+            SectionHeader(iconRes = R.drawable.ic_settings, title = "Remote controls")
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "The Remote Control Center commands need these " +
+                    "grants. Each command names its missing grant " +
+                    "until you allow it here. The Torch command also " +
+                    "needs the Camera permission, granted in the " +
+                    "Evidence section above.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                if (writeSettingsGranted) {
+                    "Modify system settings: allowed — the " +
+                        "brightness, screen timeout and auto-rotate " +
+                        "commands work."
+                } else {
+                    "Modify system settings: not allowed — the " +
+                        "brightness, screen timeout and auto-rotate " +
+                        "commands need it. Android asks once, in " +
+                        "system Settings."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (!writeSettingsGranted) {
+                Spacer(Modifier.height(12.dp))
+                GuardOutlinedButton(
+                    onClick = {
+                        activity?.startActivity(
+                            Intent(
+                                Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                                Uri.parse("package:" + context.packageName),
+                            ),
+                        )
+                    },
+                    text = "Allow modifying system settings",
+                    iconRes = R.drawable.ic_settings,
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                if (dndGranted) {
+                    "Do Not Disturb access: allowed — the DND " +
+                        "command works."
+                } else {
+                    "Do Not Disturb access: not allowed — the DND " +
+                        "command needs it. Android asks once, in " +
+                        "system Settings."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (!dndGranted) {
+                Spacer(Modifier.height(12.dp))
+                GuardOutlinedButton(
+                    onClick = {
+                        activity?.startActivity(
+                            Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS),
+                        )
+                    },
+                    text = "Allow Do Not Disturb access",
+                    iconRes = R.drawable.ic_dnd,
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                if (btGranted) {
+                    "Bluetooth permission: allowed — OpenGuard can " +
+                        "check Bluetooth state and show the enable " +
+                        "prompt."
+                } else {
+                    "Bluetooth permission: not allowed — OpenGuard " +
+                        "needs it to check Bluetooth state and show " +
+                        "the enable prompt. Android 13+ never lets " +
+                        "apps turn Bluetooth on silently."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (!btGranted) {
+                Spacer(Modifier.height(12.dp))
+                GuardOutlinedButton(
+                    onClick = { btLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT) },
+                    text = "Allow Bluetooth permission",
+                    iconRes = R.drawable.ic_bluetooth,
                 )
             }
 
@@ -482,6 +761,101 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            Spacer(Modifier.height(24.dp))
+            SectionHeader(iconRes = R.drawable.ic_bell, title = "Trusted contact alerts")
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Send recovery alerts by SMS to your trusted number. " +
+                    "Each alert is sent at most once an hour. SMS is " +
+                    "sent from this phone's own SIM — the cost is on " +
+                    "your mobile plan, never on OpenGuard.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "SIM change",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(
+                    checked = trustedAlertSim,
+                    onCheckedChange = {
+                        trustedAlertSim = it
+                        SecurityPrefs.setTrustedAlertSimChangeEnabled(context, it)
+                    },
+                    enabled = hasTrustedNumber,
+                )
+            }
+            Text(
+                "Text your trusted number when the SIM card changes.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Offline for over an hour",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(
+                    checked = trustedAlertOffline,
+                    onCheckedChange = {
+                        trustedAlertOffline = it
+                        SecurityPrefs.setTrustedAlertOfflineEnabled(context, it)
+                    },
+                    enabled = hasTrustedNumber,
+                )
+            }
+            Text(
+                "Text your trusted number when this phone comes back " +
+                    "online after being offline for over an hour.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Low battery",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(
+                    checked = trustedAlertLowBattery,
+                    onCheckedChange = {
+                        trustedAlertLowBattery = it
+                        SecurityPrefs.setTrustedAlertLowBatteryEnabled(context, it)
+                    },
+                    enabled = hasTrustedNumber,
+                )
+            }
+            Text(
+                "Text your trusted number when the battery drops to " +
+                    "15% or below.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (!hasTrustedNumber) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Set a trusted number above to turn these alerts on.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
 
             Spacer(Modifier.height(24.dp))
             SectionHeader(iconRes = R.drawable.ic_radar, title = "WiFi reconnect")

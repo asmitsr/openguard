@@ -2,6 +2,7 @@ package com.openguard.core.network
 
 import com.openguard.core.common.AppConfig
 import com.openguard.core.common.Result
+import com.openguard.core.evidence.EvidenceApi
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
@@ -14,10 +15,11 @@ import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.POST
 
-/** Builds the Retrofit [ApiService] with auth interceptor + token refresh. */
+/** Builds the Retrofit [ApiService] + [EvidenceApi] with auth interceptor + token refresh. */
 class ApiClient(tokenStore: TokenStore) {
 
     val api: ApiService
+    val evidenceApi: EvidenceApi
 
     init {
         val baseUrl = AppConfig.API_BASE_URL
@@ -47,12 +49,15 @@ class ApiClient(tokenStore: TokenStore) {
             )
             .build()
 
-        api = Retrofit.Builder()
+        // One Retrofit instance serves both interfaces, so they share the
+        // base URL, OkHttp client and auth behaviour.
+        val retrofit = Retrofit.Builder()
             .baseUrl(baseUrl)
             .client(client)
             .addConverterFactory(GsonConverterFactory.create())
             .build()
-            .create(ApiService::class.java)
+        api = retrofit.create(ApiService::class.java)
+        evidenceApi = retrofit.create(EvidenceApi::class.java)
     }
 
     private fun plainClient(): OkHttpClient = OkHttpClient.Builder()

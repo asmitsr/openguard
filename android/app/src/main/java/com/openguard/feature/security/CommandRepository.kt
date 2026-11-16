@@ -15,18 +15,24 @@ import java.util.UUID
  */
 class CommandRepository(private val api: ApiService) {
 
-    /** A fresh idempotency key per send: retries never double-issue. */
+    /**
+     * A fresh idempotency key per send: retries never double-issue.
+     * Payload values are strings (the DTO is Map<String, String>):
+     * numbers and booleans travel as their string form, e.g.
+     * set_volume takes {"stream": "all", "level": "100"}. Lost Mode
+     * passes {"message": "..."}; actions without params pass null.
+     */
     suspend fun createCommand(
         deviceId: String,
         action: String,
-        message: String? = null,
+        payload: Map<String, String>? = null,
         stepUpToken: String? = null,
     ): Result<CommandDto> = apiCall {
         api.createCommand(
             deviceId,
             CreateCommandRequest(
                 action = action,
-                payload = message?.takeIf { it.isNotBlank() }?.let { mapOf("message" to it) },
+                payload = payload,
                 idempotencyKey = UUID.randomUUID().toString(),
                 stepUpToken = stepUpToken,
             ),

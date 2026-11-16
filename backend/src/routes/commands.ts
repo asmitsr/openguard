@@ -8,7 +8,29 @@ import { rateLimited } from '../lib/ratelimit'
 
 const app = new Hono<{ Bindings: Env }>()
 
-const ACTIONS = ['ring', 'lock', 'lost_mode_on', 'lost_mode_off', 'erase'] as const
+const ACTIONS = [
+  'ring',
+  'lock',
+  'lost_mode_on',
+  'lost_mode_off',
+  'erase',
+  // Workstream B: Remote Control Center. The DB CHECK constraint
+  // (commands_action_check_v3, migration 006) must list these too.
+  'set_volume',
+  'set_brightness',
+  'set_auto_brightness',
+  'torch_on',
+  'torch_off',
+  'set_ringer_mode',
+  'set_dnd',
+  'set_screen_timeout',
+  'set_auto_rotate',
+  'speak_message',
+  'wake_screen',
+  'set_wallpaper',
+  'bluetooth_on',
+  'evidence_capture',
+] as const
 type Action = (typeof ACTIONS)[number]
 
 const EVENT_TYPES = [
@@ -24,6 +46,103 @@ const EVENT_TYPES = [
 
 function isAction(v: unknown): v is Action {
   return typeof v === 'string' && (ACTIONS as readonly string[]).includes(v)
+}
+
+// Per-action payload contract. All values are strings: the Android
+// client sends Map<String, String> and the dashboard sends strings
+// too, so the device parses with toIntOrNull/toBooleanStrictOrNull.
+// validatePayload returns the normalized payload to store, or an
+// error message. Unknown keys are dropped, never stored.
+const VOLUME_STREAMS = ['all', 'media', 'ring', 'alarm', 'notification']
+const RINGER_MODES = ['normal', 'silent', 'vibrate']
+const DND_MODES = ['off', 'alarms', 'priority', 'none']
+const WALLPAPER_TARGETS = ['lock', 'home', 'both']
+
+function isIntString(v: unknown, min: number, max: number): v is string {
+  return typeof v === 'string' && /^-?\d+$/.test(v) && +v >= min && +v <= max
+}
+
+type ValidatedPayload =
+  | { ok: true; stored: Record<string, string> | null }
+  | { ok: false; error: string }
+
+function validatePayload(
+  action: Action,
+  payload: Record<string, unknown> | null | undefined,
+): ValidatedPayload {
+  const p = payload ?? {}
+  const message = p.message
+  if (message !== undefined && (typeof message !== 'string' || message.length > 200)) {
+    return { ok: false, error: 'payload.message must be a string of at most 200 characters' }
+  }
+  switch (action) {
+    case 'set_volume': {
+      const stream = p.stream ?? 'all'
+      const level = p.level ?? '100'
+      if (!VOLUME_STREAMS.includes(stream as string) || !isIntString(level, 0, 100)) {
+        return {
+          ok: false,
+          error: 'set_volume needs stream (all, media, ring, alarm, notification) and level (0-100)',
+        }
+      }
+      return { ok: true, stored: { stream: stream as string, level: level as string } }
+    }
+    case 'set_brightness': {
+      const level = p.level ?? '100'
+      if (!isIntString(level, 0, 100)) {
+        return { ok: false, error: 'set_brightness needs level (0-100)' }
+      }
+      return { ok: true, stored: { level: level as string } }
+    }
+    case 'set_auto_brightness':
+    case 'set_auto_rotate': {
+      if (p.enabled !== 'true' && p.enabled !== 'false') {
+        return { ok: false, error: `${action} needs enabled ("true" or "false")` }
+      }
+      return { ok: true, stored: { enabled: p.enabled as string } }
+    }
+    case 'set_ringer_mode': {
+      if (!RINGER_MODES.includes(p.mode as string)) {
+        return { ok: false, error: 'set_ringer_mode needs mode (normal, silent, vibrate)' }
+      }
+      return { ok: true, stored: { mode: p.mode as string } }
+    }
+    case 'set_dnd': {
+      if (!DND_MODES.includes(p.mode as string)) {
+        return { ok: false, error: 'set_dnd needs mode (off, alarms, priority, none)' }
+      }
+      return { ok: true, stored: { mode: p.mode as string } }
+    }
+    case 'set_screen_timeout': {
+      if (!isIntString(p.seconds, 15, 1800)) {
+        return { ok: false, error: 'set_screen_timeout needs seconds (15-1800)' }
+      }
+      return { ok: true, stored: { seconds: p.seconds as string } }
+    }
+    case 'speak_message':
+      return {
+        ok: true,
+        stored: typeof message === 'string' && message ? { message } : null,
+      }
+    case 'set_wallpaper': {
+      const which = p.which ?? 'lock'
+      if (!WALLPAPER_TARGETS.includes(which as string)) {
+        return { ok: false, error: 'set_wallpaper needs which (lock, home, both)' }
+      }
+      const stored: Record<string, string> = { which: which as string }
+      if (typeof message === 'string' && message) stored.message = message
+      return { ok: true, stored }
+    }
+    case 'lost_mode_on':
+      return {
+        ok: true,
+        stored: typeof message === 'string' && message ? { message } : null,
+      }
+    default:
+      // ring, lock, lost_mode_off, erase, torch_on/off, wake_screen,
+      // bluetooth_on, evidence_capture: no payload.
+      return { ok: true, stored: null }
+  }
 }
 
 type CommandRow = {
@@ -72,16 +191,19 @@ app.post('/devices/:id/commands', async (c) => {
     (payload !== undefined &&
       payload !== null &&
       (typeof payload !== 'object' || Array.isArray(payload))) ||
-    (message !== undefined && (typeof message !== 'string' || message.length > 200)) ||
     (idempotencyKey !== undefined &&
       (typeof idempotencyKey !== 'string' || !idempotencyKey || idempotencyKey.length > 100))
   ) {
     return err(
       c,
       400,
-      'action must be ring, lock, lost_mode_on, lost_mode_off or erase; payload.message max 200 chars; idempotency_key max 100 chars',
+      'action must be one of: ' +
+        ACTIONS.join(', ') +
+        '; payload must be an object; idempotency_key max 100 chars',
     )
   }
+  const validated = validatePayload(action, payload)
+  if (!validated.ok) return err(c, 400, validated.error)
   const sql = db(c.env)
   if (idempotencyKey) {
     const existing = await sql`
@@ -111,9 +233,8 @@ app.post('/devices/:id/commands', async (c) => {
       return err(c, 409, 'device is offline — erase requires the device to be online')
     }
   }
-  // The message only applies to lost_mode_on; other actions carry no payload.
-  const storedPayload =
-    action === 'lost_mode_on' && typeof message === 'string' ? { message } : null
+  // Only the validated, normalized payload is stored (see validatePayload).
+  const storedPayload = validated.stored
   // Erase expires in 5 minutes; other commands queue for 24 hours so an
   // offline phone doesn't lose them.
   const expiresAt = new Date(

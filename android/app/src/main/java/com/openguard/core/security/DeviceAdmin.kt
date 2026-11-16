@@ -6,6 +6,7 @@ import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import com.openguard.OpenGuardApp
 import com.openguard.R
 import com.openguard.core.location.UploadWorker
@@ -87,6 +88,34 @@ object DeviceAdminManager {
         } catch (e: SecurityException) {
             false
         }
+    }
+
+    /**
+     * Owner uninstall: removes this app's own device admin, then opens
+     * the system uninstall prompt for OpenGuard itself. Android blocks
+     * uninstall while device admin is active (the home-screen uninstall
+     * just fails with no explanation), so the owner needs this one-tap
+     * way out. A thief still cannot delete the app from the home screen
+     * — only the owner, from inside Settings. Removing admin fires
+     * onDisabled, so the removal is recorded as a security event.
+     * No permission needed: ACTION_DELETE for one's own package is
+     * allowed, and the system dialog is the confirmation.
+     */
+    fun uninstall(context: Context) {
+        try {
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+            if (dpm.isAdminActive(componentName(context))) {
+                dpm.removeActiveAdmin(componentName(context))
+            }
+        } catch (e: SecurityException) {
+            // Admin removal failed; still offer the uninstall prompt —
+            // the system will explain if it cannot proceed.
+        }
+        val intent = Intent(Intent.ACTION_DELETE).apply {
+            data = Uri.parse("package:" + context.packageName)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
     }
 
     /**

@@ -26,6 +26,15 @@ export default function CommandPanel({
   const [eraseConfirm, setEraseConfirm] = useState('')
   const [erasePassword, setErasePassword] = useState('')
   const [detail, setDetail] = useState<CommandDetail | null>(null)
+  // Remote controls (Workstream B): payload values are strings, matching
+  // the server contract and the Android client's Map<String, String>.
+  const [volumeStream, setVolumeStream] = useState('all')
+  const [volumeLevel, setVolumeLevel] = useState(100)
+  const [brightnessLevel, setBrightnessLevel] = useState(100)
+  const [timeoutSeconds, setTimeoutSeconds] = useState('60')
+  const [speakText, setSpeakText] = useState('')
+  const [wallpaperText, setWallpaperText] = useState('')
+  const [wallpaperWhich, setWallpaperWhich] = useState('lock')
 
   // Selecting another device closes the erase panel and command detail,
   // as in the original dashboard.
@@ -37,9 +46,10 @@ export default function CommandPanel({
   const online = isOnline(device)
   const enabled = !!device && !busy
 
-  async function sendCommand(action: string) {
+  async function sendCommand(action: string, payload?: Record<string, string>) {
     if (!device) return
     const body: Record<string, unknown> = { action }
+    if (payload) body.payload = payload
     if (action === 'lost_mode_on') {
       const msg = lostMessage.trim()
       if (msg) body.payload = { message: msg }
@@ -150,6 +160,177 @@ export default function CommandPanel({
           </div>
         </div>
       )}
+      <h3>Remote controls</h3>
+      <p className="muted">
+        Brightness, screen timeout and auto-rotate need “Modify system settings” on the phone; Do Not Disturb needs DND access; the torch
+        needs camera permission. Each command reports the exact missing grant. The torch is unavailable while Lost Mode has the camera
+        disabled.
+      </p>
+      <div className="row" style={{ alignItems: 'end' }}>
+        <label className="muted">
+          Volume stream
+          <select value={volumeStream} onChange={(e) => setVolumeStream(e.target.value)} style={{ width: '100%', padding: 9, borderRadius: 8, border: '1px solid #c9d2dc' }}>
+            <option value="all">All streams</option>
+            <option value="media">Media</option>
+            <option value="ring">Ring</option>
+            <option value="alarm">Alarm</option>
+            <option value="notification">Notification</option>
+          </select>
+        </label>
+        <label className="muted">
+          Volume — {volumeLevel}%
+          <input type="range" min={0} max={100} value={volumeLevel} onChange={(e) => setVolumeLevel(+e.target.value)} />
+        </label>
+        <button
+          className="secondary"
+          disabled={!enabled}
+          onClick={() => sendCommand('set_volume', { stream: volumeStream, level: String(volumeLevel) })}
+        >
+          Set volume
+        </button>
+      </div>
+      <div className="row" style={{ alignItems: 'end', marginTop: 8 }}>
+        <label className="muted">
+          Brightness — {brightnessLevel}%
+          <input type="range" min={0} max={100} value={brightnessLevel} onChange={(e) => setBrightnessLevel(+e.target.value)} />
+        </label>
+        <button
+          className="secondary"
+          disabled={!enabled}
+          onClick={() => sendCommand('set_brightness', { level: String(brightnessLevel) })}
+        >
+          Set brightness
+        </button>
+        <button className="secondary" disabled={!enabled} onClick={() => sendCommand('set_auto_brightness', { enabled: 'true' })}>
+          Auto-brightness on
+        </button>
+        <button className="secondary" disabled={!enabled} onClick={() => sendCommand('set_auto_brightness', { enabled: 'false' })}>
+          Auto-brightness off
+        </button>
+      </div>
+      <div className="row" style={{ marginTop: 8 }}>
+        <button className="secondary" disabled={!enabled} onClick={() => sendCommand('torch_on')}>
+          Torch on
+        </button>
+        <button className="secondary" disabled={!enabled} onClick={() => sendCommand('torch_off')}>
+          Torch off
+        </button>
+        <button className="secondary" disabled={!enabled} onClick={() => sendCommand('wake_screen')}>
+          Wake screen
+        </button>
+        <button
+          className="secondary"
+          disabled={!enabled}
+          title="Needs Lost Mode on — recording only runs while the phone is marked lost"
+          onClick={() => sendCommand('evidence_capture')}
+        >
+          Capture evidence
+        </button>
+      </div>
+      <div className="row" style={{ marginTop: 8 }}>
+        <button className="secondary" disabled={!enabled} onClick={() => sendCommand('set_ringer_mode', { mode: 'normal' })}>
+          Ringer: normal
+        </button>
+        <button className="secondary" disabled={!enabled} onClick={() => sendCommand('set_ringer_mode', { mode: 'vibrate' })}>
+          Ringer: vibrate
+        </button>
+        <button className="secondary" disabled={!enabled} onClick={() => sendCommand('set_ringer_mode', { mode: 'silent' })}>
+          Ringer: silent
+        </button>
+      </div>
+      <div className="row" style={{ marginTop: 8 }}>
+        <button className="secondary" disabled={!enabled} onClick={() => sendCommand('set_dnd', { mode: 'off' })}>
+          DND off
+        </button>
+        <button className="secondary" disabled={!enabled} onClick={() => sendCommand('set_dnd', { mode: 'alarms' })}>
+          DND: alarms only
+        </button>
+        <button className="secondary" disabled={!enabled} onClick={() => sendCommand('set_dnd', { mode: 'priority' })}>
+          DND: priority only
+        </button>
+        <button className="secondary" disabled={!enabled} onClick={() => sendCommand('set_dnd', { mode: 'none' })}>
+          DND: total silence
+        </button>
+      </div>
+      <div className="row" style={{ alignItems: 'end', marginTop: 8 }}>
+        <label className="muted">
+          Screen timeout
+          <select value={timeoutSeconds} onChange={(e) => setTimeoutSeconds(e.target.value)} style={{ width: '100%', padding: 9, borderRadius: 8, border: '1px solid #c9d2dc' }}>
+            <option value="15">15 seconds</option>
+            <option value="30">30 seconds</option>
+            <option value="60">1 minute</option>
+            <option value="120">2 minutes</option>
+            <option value="300">5 minutes</option>
+            <option value="600">10 minutes</option>
+            <option value="1800">30 minutes</option>
+          </select>
+        </label>
+        <button className="secondary" disabled={!enabled} onClick={() => sendCommand('set_screen_timeout', { seconds: timeoutSeconds })}>
+          Set timeout
+        </button>
+        <button className="secondary" disabled={!enabled} onClick={() => sendCommand('set_auto_rotate', { enabled: 'true' })}>
+          Auto-rotate on
+        </button>
+        <button className="secondary" disabled={!enabled} onClick={() => sendCommand('set_auto_rotate', { enabled: 'false' })}>
+          Auto-rotate off
+        </button>
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <input
+          placeholder="Spoken message (read aloud at full volume; empty = “This phone is lost. Please contact the owner.”)"
+          maxLength={200}
+          value={speakText}
+          onChange={(e) => setSpeakText(e.target.value)}
+        />
+        <div className="row">
+          <button
+            className="secondary"
+            disabled={!enabled}
+            onClick={() => sendCommand('speak_message', speakText.trim() ? { message: speakText.trim() } : undefined)}
+          >
+            Speak on phone
+          </button>
+        </div>
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <input
+          placeholder="Wallpaper message (empty = “This phone is lost — please contact the owner”)"
+          maxLength={200}
+          value={wallpaperText}
+          onChange={(e) => setWallpaperText(e.target.value)}
+        />
+        <div className="row" style={{ alignItems: 'end' }}>
+          <label className="muted">
+            Wallpaper target
+            <select value={wallpaperWhich} onChange={(e) => setWallpaperWhich(e.target.value)} style={{ width: '100%', padding: 9, borderRadius: 8, border: '1px solid #c9d2dc' }}>
+              <option value="lock">Lock screen</option>
+              <option value="home">Home screen</option>
+              <option value="both">Both</option>
+            </select>
+          </label>
+          <button
+            className="secondary"
+            disabled={!enabled}
+            onClick={() =>
+              sendCommand('set_wallpaper', {
+                which: wallpaperWhich,
+                ...(wallpaperText.trim() ? { message: wallpaperText.trim() } : {}),
+              })
+            }
+          >
+            Set wallpaper
+          </button>
+        </div>
+        <p className="muted">Setting the wallpaper replaces the previous one; it cannot be restored afterwards.</p>
+      </div>
+      <div className="row" style={{ marginTop: 8 }}>
+        <button className="secondary" disabled={!enabled} onClick={() => sendCommand('bluetooth_on')}>
+          Turn on Bluetooth
+        </button>
+      </div>
+      <p className="muted">
+        Best-effort: Android 13+ does not let apps turn Bluetooth on silently. The phone shows a prompt the person holding it must accept.
+      </p>
       <p className="muted">{status}</p>
       <div>
         {listErr ? (

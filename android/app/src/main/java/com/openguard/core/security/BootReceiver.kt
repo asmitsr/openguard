@@ -3,6 +3,7 @@ package com.openguard.core.security
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import com.openguard.core.evidence.EvidenceService
 import com.openguard.core.location.LocationService
 
 /**
@@ -37,6 +38,17 @@ class BootReceiver : BroadcastReceiver() {
             // Background start denied.
         } catch (e: SecurityException) {
             // Background location revoked.
+        }
+        // Evidence records only while Lost Mode is on — and it stays
+        // on across the reboot, so restart it too. Same BOOT_COMPLETED
+        // exemption and the same try/catch (a denied start just waits
+        // for the periodic worker's backstop).
+        try {
+            EvidenceService.start(context)
+        } catch (e: IllegalStateException) {
+            // Background start denied.
+        } catch (e: SecurityException) {
+            // Camera/microphone permission revoked.
         }
     }
 }

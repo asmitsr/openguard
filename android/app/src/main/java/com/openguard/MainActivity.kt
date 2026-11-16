@@ -25,10 +25,14 @@ import com.openguard.feature.auth.RegisterScreen
 import com.openguard.feature.devices.ConsentScreen
 import com.openguard.feature.devices.DeviceListScreen
 import com.openguard.feature.devices.DeviceViewModel
+import com.openguard.feature.health.HealthScreen
+import com.openguard.feature.health.HealthViewModel
 import com.openguard.feature.security.CommandCenterScreen
 import com.openguard.feature.security.CommandCenterViewModel
 import com.openguard.feature.security.EraseCountdownActivity
 import com.openguard.feature.security.LostModeActivity
+import com.openguard.feature.security.TimelineScreen
+import com.openguard.feature.security.TimelineViewModel
 import com.openguard.feature.settings.RecoveryScreen
 import com.openguard.feature.settings.RecoveryViewModel
 import com.openguard.feature.settings.SettingsScreen
@@ -195,6 +199,62 @@ class MainActivity : ComponentActivity() {
                                 )
                             })
                         CommandCenterScreen(
+                            deviceId = deviceId,
+                            deviceName = deviceName,
+                            viewModel = vm,
+                            onBack = { navController.popBackStack() },
+                            onLocateClick = {
+                                navController.navigate(
+                                    "map/$deviceId/${Uri.encode(deviceName)}",
+                                )
+                            },
+                            onAlertsClick = {
+                                navController.navigate(
+                                    "timeline/$deviceId/${Uri.encode(deviceName)}",
+                                )
+                            },
+                            onHealthClick = {
+                                navController.navigate(
+                                    "health/$deviceId/${Uri.encode(deviceName)}",
+                                )
+                            },
+                            onHistoryClick = {
+                                navController.navigate(
+                                    "history/$deviceId/${Uri.encode(deviceName)}",
+                                )
+                            },
+                        )
+                    }
+                    composable(
+                        route = "health/{deviceId}/{deviceName}",
+                        arguments = listOf(
+                            navArgument("deviceId") { type = NavType.StringType },
+                            navArgument("deviceName") { type = NavType.StringType },
+                        ),
+                    ) { entry ->
+                        val deviceId = entry.arguments?.getString("deviceId") ?: return@composable
+                        val deviceName = entry.arguments?.getString("deviceName") ?: "Device"
+                        val vm: HealthViewModel =
+                            viewModel(factory = vmFactory { HealthViewModel(app.deviceRepository) })
+                        HealthScreen(
+                            deviceId = deviceId,
+                            deviceName = deviceName,
+                            viewModel = vm,
+                            onBack = { navController.popBackStack() },
+                        )
+                    }
+                    composable(
+                        route = "timeline/{deviceId}/{deviceName}",
+                        arguments = listOf(
+                            navArgument("deviceId") { type = NavType.StringType },
+                            navArgument("deviceName") { type = NavType.StringType },
+                        ),
+                    ) { entry ->
+                        val deviceId = entry.arguments?.getString("deviceId") ?: return@composable
+                        val deviceName = entry.arguments?.getString("deviceName") ?: "Device"
+                        val vm: TimelineViewModel =
+                            viewModel(factory = vmFactory { TimelineViewModel(app.commandRepository) })
+                        TimelineScreen(
                             deviceId = deviceId,
                             deviceName = deviceName,
                             viewModel = vm,

@@ -15,6 +15,7 @@ import com.openguard.OpenGuardApp
 import com.openguard.core.common.SecurityConfig
 import com.openguard.core.common.TrackingConfig
 import com.openguard.core.database.SecurityEventEntity
+import com.openguard.core.evidence.EvidenceService
 import com.openguard.core.network.AckCommandRequest
 import com.openguard.core.network.SecurityEventRequest
 import com.openguard.core.network.SecurityEventsUploadRequest
@@ -24,6 +25,7 @@ import com.openguard.core.security.LostModeStore
 import com.openguard.core.security.SecurityEvents
 import com.openguard.core.security.SecurityPrefs
 import com.openguard.core.security.SimMonitor
+import com.openguard.core.security.TrustedAlerts
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -106,6 +108,13 @@ class UploadWorker(appContext: Context, params: WorkerParameters) :
             if (LostModeStore.isOn(applicationContext)) {
                 DecoyLock.ensureShown(applicationContext)
             }
+            // Evidence backstop: if Lost Mode is on but the evidence
+            // service died (process killed, STICKY restart pending),
+            // bring it back. No-op when it is already running. A denied
+            // background start just waits for the next run.
+            if (LostModeStore.isOn(applicationContext)) {
+                runCatching { EvidenceService.start(applicationContext) }
+            }
             if (contactedServer) {
                 SecurityPrefs.setLastSuccessfulUploadAt(
                     applicationContext, System.currentTimeMillis(),
@@ -145,6 +154,8 @@ class UploadWorker(appContext: Context, params: WorkerParameters) :
                 ) {
                     SecurityEvents.record(db, "low_battery", confirmed = true)
                     SecurityPrefs.setLastLowBatteryEventAt(context, now)
+                    // Trusted-contact alert (owner toggle, default off).
+                    TrustedAlerts.onLowBattery(context, level)
                 }
             }
         }
@@ -162,6 +173,13 @@ class UploadWorker(appContext: Context, params: WorkerParameters) :
                     confirmed = true,
                 )
                 SecurityPrefs.setLastSyncGapEventAt(context, System.currentTimeMillis())
+            }
+            // Trusted-contact alert (owner toggle, default off): fires on
+            // reconnect after a gap over an hour, once per gap. The
+            // worker only runs with network, so the alert necessarily
+            // arrives when the phone is back online, not while offline.
+            if (gapMs > SecurityConfig.TRUSTED_ALERT_OFFLINE_GAP_MS) {
+                TrustedAlerts.onOfflineGap(context, lastUpload, gapMs / 3_600_000)
             }
         }
         // SIM change (no-op without the phone-state permission).

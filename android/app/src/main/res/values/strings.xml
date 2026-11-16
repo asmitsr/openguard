@@ -33,4 +33,13 @@
     <string name="device_admin_explanation">OpenGuard uses device admin only to lock this phone when you send a Lock or Lost Mode command, and to erase it when you send an Erase command. It never sets or changes your password, and you can remove it anytime from Settings.</string>
 
     <string name="power_menu_guard_description">Blocks the power-off menu while Lost Mode is on, so a lost phone cannot be switched off from the power menu. OpenGuard only watches for the power menu window; it does not read screen content.</string>
+
+    <string name="evidence_channel_name">Evidence recording</string>
+    <string name="evidence_channel_description">Shows while Lost Mode records evidence clips</string>
+    <string name="evidence_notification_title">Recording evidence (Lost Mode)</string>
+    <string name="evidence_notification_text">OpenGuard is recording short clips while Lost Mode is on. The camera and microphone indicators stay visible.</string>
+
+    <string name="bluetooth_channel_name">Bluetooth</string>
+    <string name="bluetooth_notification_title">Turn on Bluetooth?</string>
+    <string name="bluetooth_notification_text">OpenGuard was asked to turn on Bluetooth. Tap to allow it — Android does not let apps turn Bluetooth on silently.</string>
 </resources>

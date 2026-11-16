@@ -17,10 +17,32 @@ app.get('/', async (c) => {
   const rows = await db(c.env)`
     SELECT id, name, model, os_version, last_seen_at, battery_level,
            battery_charging, network_type, lost_mode, lost_message,
-           location_permission, location_enabled, created_at
+           location_permission, location_enabled, created_at,
+           storage_total_bytes, storage_free_bytes, ram_total_bytes,
+           ram_free_bytes, battery_temperature_c, booted_at,
+           notifications_enabled
     FROM devices WHERE user_id = ${auth.user.id} ORDER BY created_at DESC`
-  return c.json(rows)
+  // int8 columns arrive as strings over Neon's HTTP driver (and as
+  // numbers on the Node self-host, see dbNode.ts). Normalize to numbers
+  // so both clients always see numbers — byte counts are far below
+  // 2^53, so the conversion is exact.
+  const devices = rows.map((row) => {
+    const d = row as Record<string, unknown>
+    for (const key of BYTE_COLUMNS) {
+      if (typeof d[key] === 'string') d[key] = Number(d[key])
+    }
+    return d
+  })
+  return c.json(devices)
 })
+
+// bigint health columns on devices, normalized to JSON numbers above.
+const BYTE_COLUMNS = [
+  'storage_total_bytes',
+  'storage_free_bytes',
+  'ram_total_bytes',
+  'ram_free_bytes',
+] as const
 
 app.post('/', async (c) => {
   const auth = await authenticateUser(c)
@@ -158,6 +180,37 @@ app.post('/:id/push-topic', async (c) => {
   return c.body(null, 204)
 })
 
+// Device health (migration 006): all optional, so older app versions
+// keep heartbeating. Absent fields leave the stored values untouched
+// (COALESCE below); present ones are range-checked.
+function isOptByteCount(v: unknown): v is number | undefined {
+  return (
+    v === undefined ||
+    v === null ||
+    (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0)
+  )
+}
+
+function isOptTemperature(v: unknown): v is number | undefined {
+  return (
+    v === undefined ||
+    v === null ||
+    (typeof v === 'number' && Number.isFinite(v) && v >= -50 && v <= 100)
+  )
+}
+
+function isOptIsoDate(v: unknown): v is string | undefined {
+  return (
+    v === undefined ||
+    v === null ||
+    (typeof v === 'string' && v.length <= 50 && !Number.isNaN(Date.parse(v)))
+  )
+}
+
+function isOptBool(v: unknown): v is boolean | undefined {
+  return v === undefined || v === null || typeof v === 'boolean'
+}
+
 app.post('/:id/heartbeat', async (c) => {
   const device = await authenticateDevice(c, c.req.param('id'))
   if (!device) return err(c, 401, 'unauthorized')
@@ -167,12 +220,26 @@ app.post('/:id/heartbeat', async (c) => {
     network_type?: unknown
     location_permission?: unknown
     location_enabled?: unknown
+    storage_total_bytes?: unknown
+    storage_free_bytes?: unknown
+    ram_total_bytes?: unknown
+    ram_free_bytes?: unknown
+    battery_temperature_c?: unknown
+    booted_at?: unknown
+    notifications_enabled?: unknown
   }>(c)
   const batteryLevel = body?.battery_level
   const batteryCharging = body?.battery_charging
   const networkType = body?.network_type
   const locationPermission = body?.location_permission
   const locationEnabled = body?.location_enabled
+  const storageTotalBytes = body?.storage_total_bytes
+  const storageFreeBytes = body?.storage_free_bytes
+  const ramTotalBytes = body?.ram_total_bytes
+  const ramFreeBytes = body?.ram_free_bytes
+  const batteryTemperatureC = body?.battery_temperature_c
+  const bootedAt = body?.booted_at
+  const notificationsEnabled = body?.notifications_enabled
   if (
     typeof batteryLevel !== 'number' ||
     !Number.isInteger(batteryLevel) ||
@@ -181,18 +248,35 @@ app.post('/:id/heartbeat', async (c) => {
     typeof batteryCharging !== 'boolean' ||
     !isOptString(networkType, 50) ||
     !isOptString(locationPermission, 50) ||
-    (locationEnabled !== undefined &&
-      locationEnabled !== null &&
-      typeof locationEnabled !== 'boolean')
+    !isOptBool(locationEnabled) ||
+    !isOptByteCount(storageTotalBytes) ||
+    !isOptByteCount(storageFreeBytes) ||
+    !isOptByteCount(ramTotalBytes) ||
+    !isOptByteCount(ramFreeBytes) ||
+    !isOptTemperature(batteryTemperatureC) ||
+    !isOptIsoDate(bootedAt) ||
+    !isOptBool(notificationsEnabled)
   ) {
-    return err(c, 400, 'battery_level (0-100 int), battery_charging and network_type required')
+    return err(
+      c,
+      400,
+      'battery_level (0-100 int), battery_charging and network_type required; ' +
+        'health fields must be in range when present',
+    )
   }
   await db(c.env)`
     UPDATE devices
     SET battery_level = ${batteryLevel}, battery_charging = ${batteryCharging},
         network_type = ${networkType ?? null}, last_seen_at = now(),
         location_permission = COALESCE(${locationPermission ?? null}, location_permission),
-        location_enabled = COALESCE(${locationEnabled ?? null}, location_enabled)
+        location_enabled = COALESCE(${locationEnabled ?? null}, location_enabled),
+        storage_total_bytes = COALESCE(${storageTotalBytes ?? null}, storage_total_bytes),
+        storage_free_bytes = COALESCE(${storageFreeBytes ?? null}, storage_free_bytes),
+        ram_total_bytes = COALESCE(${ramTotalBytes ?? null}, ram_total_bytes),
+        ram_free_bytes = COALESCE(${ramFreeBytes ?? null}, ram_free_bytes),
+        battery_temperature_c = COALESCE(${batteryTemperatureC ?? null}, battery_temperature_c),
+        booted_at = COALESCE(${bootedAt ?? null}, booted_at),
+        notifications_enabled = COALESCE(${notificationsEnabled ?? null}, notifications_enabled)
     WHERE id = ${device.id}`
   return c.body(null, 204)
 })

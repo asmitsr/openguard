@@ -145,12 +145,20 @@ object LiveUploader {
             TrackingPermissions.hasFineLocation(context) -> "foreground"
             else -> "none"
         }
+        val health = DeviceHealthCollector.collect(context)
         return HeartbeatRequest(
             batteryLevel = level,
             batteryCharging = charging,
             networkType = networkType(context),
             locationPermission = permission,
             locationEnabled = locationProvidersEnabled(context),
+            storageTotalBytes = health.storageTotalBytes,
+            storageFreeBytes = health.storageFreeBytes,
+            ramTotalBytes = health.ramTotalBytes,
+            ramFreeBytes = health.ramFreeBytes,
+            batteryTemperatureC = health.batteryTemperatureC,
+            bootedAt = health.bootedAt,
+            notificationsEnabled = health.notificationsEnabled,
         )
     }
 

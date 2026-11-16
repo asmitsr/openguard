@@ -40,6 +40,37 @@
          owner's trusted number. Cost falls on the app user via their SIM. -->
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.SEND_SMS" />
+    <!-- Evidence (Lost Mode only): the camera records short clips and the
+         microphone records audio. Both are runtime permissions, granted
+         in Settings; the service stops itself without the microphone.
+         CAMERA is also the torch permission for the Remote Control
+         Center (CameraManager enforces it on API 31+). -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Android 14 requires the per-type permission matching the
+         EvidenceService foregroundServiceType (camera|microphone). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Remote Control Center: volume + ringer mode (normal, auto-granted
+         at install). -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Special, user-granted in Settings (ACTION_MANAGE_WRITE_SETTINGS):
+         brightness, auto-brightness, screen timeout, auto-rotate. -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <!-- Special, user-granted in Settings
+         (ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS): Do Not Disturb. -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <!-- Normal: wake screen. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Normal: lost-message wallpaper. -->
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
+    <!-- Bluetooth state (API 31+ runtime; the old permissions are
+         pre-31 only). Android 13+ never lets an app turn Bluetooth on
+         silently — the enable command only shows the system dialog. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-feature android:name="android.hardware.camera.flash" android:required="false" />
 
     <!-- Chaos mode launches these apps behind the decoy lock during Lost
          Mode (Android 11+ package visibility: getLaunchIntentForPackage
@@ -54,6 +85,8 @@
     <application
         android:name=".OpenGuardApp"
         android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.OpenGuard">
@@ -90,6 +123,13 @@
             android:name=".core.security.RingService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- Evidence: records short clips while Lost Mode is on, and only
+             then. Started by LostMode.turnOn, stopped by turnOff. -->
+        <service
+            android:name=".core.evidence.EvidenceService"
+            android:exported="false"
+            android:foregroundServiceType="camera|microphone" />
 
         <receiver
             android:name=".core.security.OpenGuardDeviceAdmin"
