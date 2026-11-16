@@ -4,6 +4,133 @@ Built 16 Nov 2026. Backend + dashboard verified (typecheck green, local
 `wrangler dev` smoke test passed, docs audit passed). Android written but
 never compiled (no SDK/Java on this VM) — first real build is GitHub Actions.
 
+## Phase 2 Protection (built 16 Nov 2026, not yet deployed)
+
+Remote commands (ring, lock, Lost Mode), SIM-change alerts, device status
+monitoring, security event log, Command Center (Android + dashboard).
+
+### Deploy steps (parent) — in this order
+
+1. **Apply the migration to Neon.** Paste `db/migrations/002_commands.sql`
+   into the Neon SQL Editor and run it (idempotent: `IF NOT EXISTS`
+   throughout). Adds `commands` + `security_events` tables and 4 columns
+   on `devices` (`lost_mode`, `lost_message`, `location_permission`,
+   `location_enabled`). Do NOT re-apply `db/schema.sql` — v1 is live.
+2. **Deploy the Worker** (backend changed: new `routes/commands.ts`,
+   heartbeat + device-list extensions, dashboard additions).
+3. **Push to GitHub** — CI builds the Android APK as before.
+
+### Polling latency (honest)
+
+There is NO push channel in this phase (no FCM): the phone polls pending
+commands in `UploadWorker`, which runs at most every 15 minutes
+(WorkManager minimum). A command sent from the dashboard therefore reaches
+the phone within ~15 minutes in the worst case — sooner if the phone's
+periodic work runs earlier, and within seconds when the owner sends the
+command from the Command Center on the same phone (it enqueues a one-time
+worker). Commands expire after 5 minutes, so a phone that is offline for
+more than 5 minutes will find the command expired on its next poll and the
+owner must re-send. Push is never command authentication: the phone
+fetches over authenticated TLS (device token) and executes only commands
+bound to its own device id, with id+nonce replay protection.
+
+### What was built
+
+- **Backend** (`backend/src/routes/commands.ts`, 6 new endpoints, all
+  following the v1 patterns): `POST /devices/:id/commands` (create;
+  owner-only; actions ring/lock/lost_mode_on/lost_mode_off; server nonce;
+  5-min expiry; idempotency key; 20/min/user rate limit; audit
+  `command_create`; lost-mode commands update the device row),
+  `GET /devices/:id/commands` (history, newest first),
+  `GET /devices/:id/commands/pending` (device token; expires stale rows,
+  marks returned rows `delivered`),
+  `POST /commands/:id/ack` (device token; command must belong to the
+  device, else 404 + `command_reject` audit; success audits `command_ack`),
+  `POST /devices/:id/security-events` (device token; bulk insert 1–100),
+  `GET /devices/:id/security-events` (user, newest first).
+  Heartbeat accepts optional `location_permission` + `location_enabled`;
+  device list returns the 4 new columns.
+- **Dashboard** (`backend/public/index.html`): "LOST MODE" badge on device
+  cards; battery/network/location-permission/location-enabled in device
+  details; Command Center card (Ring / Lock / Lost Mode ON / OFF +
+  200-char message input + command-status list + honest ~15-min note);
+  Alerts card (security events with Confirmed/Indication badge; SIM
+  change reads "SIM changed — check if this was you").
+- **Android** (41 .kt files, zero new dependencies):
+  - `CommandExecutor` — validates, replay-guards (id+nonce in
+    SecurityPrefs), dispatches, returns ack outcome.
+  - `RingService` — alarm-stream loop at max volume (restored on stop) +
+    vibration + Stop notification; stops on unlock / Stop tap / 2 min;
+    rings in silent/DND. Caveat: Android 12+ blocks background FGS starts,
+    so a ring command acks `failed` ("open the app or turn tracking on
+    first") unless tracking is on or the app is open.
+  - `DeviceAdmin` — `DeviceAdminReceiver` + `lockNow()`; admin activation
+    flow in Settings; `onDisabled` records `admin_disabled`. No password
+    policy (dead since Android 9–11).
+  - Lost Mode — `LostModeStore` + `LostModeActivity` (showWhenLocked +
+    turnScreenOn, back disabled, exit only via device-credential confirm
+    + `lost_mode_off` command). Turns the lock on immediately when admin
+    is active; full-screen-intent notification to surface the screen.
+    Honest limit: Home cannot be blocked without a launcher — Lost Mode
+    is a deterrent + contact channel, not a kiosk lock.
+  - `SimMonitor` — compares subscription ids each worker run; records
+    `sim_changed` (confirmed=false, always an indication) + local
+    notification; trusted SIMs managed from Settings; needs
+    READ_PHONE_STATE (consent step 4).
+  - Security events — Room outbox (`security_events`, DB v2 with real
+    Migration(1,2)); recorded on state change only (permission revoked,
+    location disabled), low battery ≤15% max once/24h, sync gap >6h;
+    uploaded by `UploadWorker` under the same data-loss rule as locations.
+  - `UploadWorker` — now also polls pending commands + acks, uploads
+    security events, and sends the extended heartbeat.
+  - Command Center screen (`commands/{deviceId}/{deviceName}`) — Ring /
+    Lock / Lost Mode ON-OFF + message field + command history; shield
+    entry on each device row; Lock disabled with a hint when this phone
+    lacks device admin.
+
+### Test the new endpoints (BASE = deployed worker URL)
+
+```sh
+# create a command (ACCESS = user access token, DEVICE_ID = target device)
+curl -s -X POST $BASE/api/v1/devices/$DEVICE_ID/commands \
+  -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+  -d '{"action":"ring"}'
+# lost mode on with a message
+curl -s -X POST $BASE/api/v1/devices/$DEVICE_ID/commands \
+  -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+  -d '{"action":"lost_mode_on","payload":{"message":"This phone is lost. Please call 01800-000000."}}'
+# command history + pending (DEVICE = device token) + ack
+curl -s $BASE/api/v1/devices/$DEVICE_ID/commands -H "Authorization: Bearer $ACCESS"
+curl -s $BASE/api/v1/devices/$DEVICE_ID/commands/pending -H "Authorization: Bearer $DEVICE"
+curl -s -X POST $BASE/api/v1/commands/$COMMAND_ID/ack \
+  -H "Authorization: Bearer $DEVICE" -H 'Content-Type: application/json' \
+  -d "{\"device_id\":\"$DEVICE_ID\",\"status\":\"acked\",\"result\":\"Ringing\"}"
+# security events (upload + list)
+curl -s -X POST $BASE/api/v1/devices/$DEVICE_ID/security-events \
+  -H "Authorization: Bearer $DEVICE" -H 'Content-Type: application/json' \
+  -d '{"events":[{"event_type":"sim_changed","details":{"trusted":false},"confirmed":false}]}'
+curl -s $BASE/api/v1/devices/$DEVICE_ID/security-events -H "Authorization: Bearer $ACCESS"
+# extended heartbeat (new fields optional; old clients still work)
+curl -s -X POST $BASE/api/v1/devices/$DEVICE_ID/heartbeat \
+  -H "Authorization: Bearer $DEVICE" -H 'Content-Type: application/json' \
+  -d '{"battery_level":72,"battery_charging":false,"network_type":"wifi","location_permission":"all","location_enabled":true}'
+```
+
+### Phase 2 stubbed / gaps
+
+- **No push channel** — polling only (see latency note above). FCM /
+  UnifiedPush is a future phase.
+- **Ring needs tracking on or the app open** (Android 12+ background FGS
+  restriction) — the command acks `failed` with an explanation otherwise.
+- **No Android UI lists security events yet** — the repository method +
+  endpoint exist; only the dashboard Alerts card shows them.
+- **Idempotency race:** two concurrent creates with the same
+  idempotency_key can both pass the existence check and hit the UNIQUE
+  constraint (500). Rare; a retry returns the existing command.
+- **Lost Mode is not a kiosk lock** (Home button still works); the phone
+  is locked and location keeps uploading.
+- Android still never compiled on this VM — CI is the first real build.
+
 ## What is done
 
 - **Backend** (`backend/`, TypeScript + Hono + `@neondatabase/serverless`):
@@ -163,9 +290,10 @@ device → check the map, history, sessions, audit, privacy panels.
 
 ## NOT built in this pass (per MVP scope)
 
-Vault, ring/lock, remote erase, Lost Mode, SMS commands, FMD/Traccar
-coupling, geofencing, advanced analytics, passkeys/TOTP. No secret camera,
-no stealth, no hidden surveillance anywhere in the code.
+Vault, remote erase, SMS commands, FMD/Traccar coupling, geofencing,
+advanced analytics, passkeys/TOTP. (Ring, lock and Lost Mode arrived in
+Phase 2, above.) No secret camera, no stealth, no hidden surveillance
+anywhere in the code.
 
 ## Rate limits (in-memory, per-isolate)
 

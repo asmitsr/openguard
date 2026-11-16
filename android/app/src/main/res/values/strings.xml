@@ -6,4 +6,21 @@
     <string name="tracking_notification_title">OpenGuard is tracking this device</string>
     <string name="tracking_notification_text">Your location is being recorded. Tap to open OpenGuard, or stop tracking anytime.</string>
     <string name="tracking_notification_stop">Stop tracking</string>
+
+    <string name="ring_channel_name">Ring</string>
+    <string name="ring_notification_title">OpenGuard is ringing this phone</string>
+    <string name="ring_notification_text">You sent a Ring command. Tap Stop to silence it, or unlock the phone.</string>
+    <string name="ring_notification_stop">Stop</string>
+
+    <string name="lost_mode_channel_name">Lost Mode</string>
+    <string name="lost_mode_notification_title">Lost Mode is on</string>
+    <string name="lost_mode_notification_text">This phone is marked as lost. Tap to see the owner message.</string>
+
+    <string name="security_channel_name">Security alerts</string>
+    <string name="sim_notification_title">SIM card changed</string>
+    <string name="sim_notification_text">Check if this was you — open OpenGuard to review.</string>
+
+    <string name="device_admin_label">OpenGuard device admin</string>
+    <string name="device_admin_description">Lets OpenGuard lock this phone when you send a Lock or Lost Mode command.</string>
+    <string name="device_admin_explanation">OpenGuard uses device admin only to lock this phone when you send a Lock or Lost Mode command. It never sets or changes your password, and you can remove it anytime from Settings.</string>
 </resources>

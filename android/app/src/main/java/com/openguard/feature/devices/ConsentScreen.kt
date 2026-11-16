@@ -81,11 +81,13 @@ fun ConsentScreen(
     val notificationsGranted = remember(tick) { TrackingPermissions.hasNotifications(context) }
     val fineGranted = remember(tick) { TrackingPermissions.hasFineLocation(context) }
     val backgroundGranted = remember(tick) { TrackingPermissions.hasBackgroundLocation(context) }
-    val allGranted = notificationsGranted && fineGranted && backgroundGranted
+    val phoneStateGranted = remember(tick) { TrackingPermissions.hasPhoneState(context) }
+    val allGranted = notificationsGranted && fineGranted && backgroundGranted && phoneStateGranted
 
     var notificationsAsked by remember { mutableStateOf(false) }
     var fineAsked by remember { mutableStateOf(false) }
     var backgroundAsked by remember { mutableStateOf(false) }
+    var phoneStateAsked by remember { mutableStateOf(false) }
 
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -94,6 +96,9 @@ fun ConsentScreen(
         ActivityResultContracts.RequestPermission(),
     ) { tick++ }
     val backgroundLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { tick++ }
+    val phoneStateLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { tick++ }
 
@@ -127,6 +132,12 @@ fun ConsentScreen(
                 "A notification saying “OpenGuard is tracking this device” stays " +
                     "visible whenever tracking is on. You can stop tracking anytime " +
                     "from that notification or from this app.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "If the SIM card changes, OpenGuard records a security alert " +
+                    "so you can check whether it was you.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             Spacer(Modifier.height(8.dp))
@@ -191,6 +202,24 @@ fun ConsentScreen(
                 onGrant = {
                     backgroundAsked = true
                     backgroundLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+                },
+                onOpenSettings = { TrackingPermissions.openAppSettings(context) },
+            )
+            PermissionStep(
+                iconRes = R.drawable.ic_smartphone,
+                title = "4. Phone state",
+                description = "Lets OpenGuard notice if the SIM card changes " +
+                    "and alert you about it.",
+                granted = phoneStateGranted,
+                permanentlyDenied = phoneStateAsked && !phoneStateGranted &&
+                    activity?.let {
+                        !ActivityCompat.shouldShowRequestPermissionRationale(
+                            it, Manifest.permission.READ_PHONE_STATE,
+                        )
+                    } == true,
+                onGrant = {
+                    phoneStateAsked = true
+                    phoneStateLauncher.launch(Manifest.permission.READ_PHONE_STATE)
                 },
                 onOpenSettings = { TrackingPermissions.openAppSettings(context) },
             )

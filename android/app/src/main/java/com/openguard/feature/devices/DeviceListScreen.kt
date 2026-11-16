@@ -44,6 +44,7 @@ import com.openguard.ui.TintedIcon
 fun DeviceListScreen(
     viewModel: DeviceViewModel,
     onDeviceClick: (DeviceDto) -> Unit,
+    onCommandsClick: (DeviceDto) -> Unit,
     onAddDeviceClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onStartTracking: () -> Unit,
@@ -131,6 +132,7 @@ fun DeviceListScreen(
                         device = device,
                         isThisDevice = device.id == viewModel.thisDeviceId,
                         onClick = { onDeviceClick(device) },
+                        onCommandsClick = { onCommandsClick(device) },
                         onDeleteClick = { deviceToDelete = device },
                     )
                 }
@@ -177,6 +179,7 @@ private fun DeviceRow(
     device: DeviceDto,
     isThisDevice: Boolean,
     onClick: () -> Unit,
+    onCommandsClick: () -> Unit,
     onDeleteClick: () -> Unit,
 ) {
     GuardCard(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
@@ -210,6 +213,19 @@ private fun DeviceRow(
                     "Last seen: ${device.lastSeenAt ?: "never"}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (device.lostMode) {
+                    Text(
+                        "Lost mode",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+            IconButton(onClick = onCommandsClick) {
+                Icon(
+                    painterResource(R.drawable.ic_shield),
+                    contentDescription = "Commands",
                 )
             }
             IconButton(onClick = onDeleteClick) {

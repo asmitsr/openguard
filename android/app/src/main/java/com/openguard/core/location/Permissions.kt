@@ -40,8 +40,14 @@ object TrackingPermissions {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
+    /** READ_PHONE_STATE: needed to read the active SIM subscription ids. */
+    fun hasPhoneState(context: Context): Boolean =
+        ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) ==
+            PackageManager.PERMISSION_GRANTED
+
     fun allGranted(context: Context): Boolean =
-        hasFineLocation(context) && hasBackgroundLocation(context) && hasNotifications(context)
+        hasFineLocation(context) && hasBackgroundLocation(context) &&
+            hasNotifications(context) && hasPhoneState(context)
 
     /** Opens this app's page in system Settings (for permanently-denied permissions). */
     fun openAppSettings(context: Context) {

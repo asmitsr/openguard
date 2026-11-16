@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import dashboardHtml from '../public/index.html'
 import auth from './routes/auth'
+import commands from './routes/commands'
 import devices from './routes/devices'
 import locations from './routes/locations'
 import misc from './routes/misc'
@@ -15,6 +16,7 @@ app.get('/api/v1/health', (c) => c.json({ ok: true }))
 app.route('/api/v1/auth', auth)
 app.route('/api/v1/devices', devices)
 app.route('/api/v1/devices', locations)
+app.route('/api/v1', commands)
 app.route('/api/v1', misc)
 
 app.notFound((c) => c.json({ error: 'not found' }, 404))

@@ -37,3 +37,31 @@ object TrackingConfig {
     const val TRACKING_CHANNEL_ID = "openguard-tracking"
     const val TRACKING_NOTIFICATION_ID = 1
 }
+
+/** Phase 2 security behaviour constants. */
+object SecurityConfig {
+    /** Events per upload batch. Backend accepts 1..100. */
+    const val SECURITY_EVENTS_BATCH_SIZE = 100
+
+    /** Low-battery event: at or below this level, while not charging. */
+    const val LOW_BATTERY_THRESHOLD = 15
+
+    /** At most one low-battery event per period. */
+    const val LOW_BATTERY_COOLDOWN_MS = 24 * 60 * 60 * 1000L
+
+    /** Sync gap: no successful upload for longer than this. */
+    const val SYNC_GAP_MS = 6 * 60 * 60 * 1000L
+
+    /** Ring stops by itself after this long. */
+    const val RING_DURATION_MS = 2 * 60 * 1000L
+
+    /** Max characters for the Lost Mode message. */
+    const val LOST_MESSAGE_MAX_LENGTH = 200
+
+    const val RING_CHANNEL_ID = "openguard-ring"
+    const val RING_NOTIFICATION_ID = 2
+    const val LOST_MODE_CHANNEL_ID = "openguard-lost-mode"
+    const val LOST_MODE_NOTIFICATION_ID = 3
+    const val SECURITY_CHANNEL_ID = "openguard-security"
+    const val SIM_NOTIFICATION_ID = 4
+}

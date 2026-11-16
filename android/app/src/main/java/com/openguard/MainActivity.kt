@@ -1,5 +1,6 @@
 package com.openguard
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -15,12 +16,16 @@ import androidx.navigation.navArgument
 import com.openguard.core.location.LocationService
 import com.openguard.core.location.TrackingPermissions
 import com.openguard.core.location.UploadWorker
+import com.openguard.core.security.LostModeStore
 import com.openguard.feature.auth.AuthViewModel
 import com.openguard.feature.auth.LoginScreen
 import com.openguard.feature.auth.RegisterScreen
 import com.openguard.feature.devices.ConsentScreen
 import com.openguard.feature.devices.DeviceListScreen
 import com.openguard.feature.devices.DeviceViewModel
+import com.openguard.feature.security.CommandCenterScreen
+import com.openguard.feature.security.CommandCenterViewModel
+import com.openguard.feature.security.LostModeActivity
 import com.openguard.feature.settings.SettingsScreen
 import com.openguard.feature.settings.SettingsViewModel
 import com.openguard.feature.tracking.HistoryScreen
@@ -32,6 +37,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val app = application as OpenGuardApp
+        // Lost Mode on: surface the Lost Mode screen over the normal UI.
+        if (LostModeStore.isOn(this)) {
+            startActivity(Intent(this, LostModeActivity::class.java))
+        }
         setContent {
             OpenGuardTheme {
                 val navController = rememberNavController()
@@ -70,6 +79,11 @@ class MainActivity : ComponentActivity() {
                             viewModel = vm,
                             onDeviceClick = { device ->
                                 navController.navigate("map/${device.id}/${Uri.encode(device.name)}")
+                            },
+                            onCommandsClick = { device ->
+                                navController.navigate(
+                                    "commands/${device.id}/${Uri.encode(device.name)}",
+                                )
                             },
                             onAddDeviceClick = { navController.navigate("consent") },
                             onSettingsClick = { navController.navigate("settings") },
@@ -138,6 +152,26 @@ class MainActivity : ComponentActivity() {
                         val vm: TrackingViewModel =
                             viewModel(factory = vmFactory { TrackingViewModel(app.deviceRepository) })
                         HistoryScreen(
+                            deviceId = deviceId,
+                            deviceName = deviceName,
+                            viewModel = vm,
+                            onBack = { navController.popBackStack() },
+                        )
+                    }
+                    composable(
+                        route = "commands/{deviceId}/{deviceName}",
+                        arguments = listOf(
+                            navArgument("deviceId") { type = NavType.StringType },
+                            navArgument("deviceName") { type = NavType.StringType },
+                        ),
+                    ) { entry ->
+                        val deviceId = entry.arguments?.getString("deviceId") ?: return@composable
+                        val deviceName = entry.arguments?.getString("deviceName") ?: "Device"
+                        val vm: CommandCenterViewModel =
+                            viewModel(factory = vmFactory {
+                                CommandCenterViewModel(app.commandRepository, app.deviceRepository)
+                            })
+                        CommandCenterScreen(
                             deviceId = deviceId,
                             deviceName = deviceName,
                             viewModel = vm,

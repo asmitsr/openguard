@@ -15,7 +15,8 @@ app.get('/', async (c) => {
   if (!auth) return err(c, 401, 'unauthorized')
   const rows = await db(c.env)`
     SELECT id, name, model, os_version, last_seen_at, battery_level,
-           battery_charging, network_type, created_at
+           battery_charging, network_type, lost_mode, lost_message,
+           location_permission, location_enabled, created_at
     FROM devices WHERE user_id = ${auth.user.id} ORDER BY created_at DESC`
   return c.json(rows)
 })
@@ -69,24 +70,34 @@ app.post('/:id/heartbeat', async (c) => {
     battery_level?: unknown
     battery_charging?: unknown
     network_type?: unknown
+    location_permission?: unknown
+    location_enabled?: unknown
   }>(c)
   const batteryLevel = body?.battery_level
   const batteryCharging = body?.battery_charging
   const networkType = body?.network_type
+  const locationPermission = body?.location_permission
+  const locationEnabled = body?.location_enabled
   if (
     typeof batteryLevel !== 'number' ||
     !Number.isInteger(batteryLevel) ||
     batteryLevel < 0 ||
     batteryLevel > 100 ||
     typeof batteryCharging !== 'boolean' ||
-    !isOptString(networkType, 50)
+    !isOptString(networkType, 50) ||
+    !isOptString(locationPermission, 50) ||
+    (locationEnabled !== undefined &&
+      locationEnabled !== null &&
+      typeof locationEnabled !== 'boolean')
   ) {
     return err(c, 400, 'battery_level (0-100 int), battery_charging and network_type required')
   }
   await db(c.env)`
     UPDATE devices
     SET battery_level = ${batteryLevel}, battery_charging = ${batteryCharging},
-        network_type = ${networkType ?? null}, last_seen_at = now()
+        network_type = ${networkType ?? null}, last_seen_at = now(),
+        location_permission = COALESCE(${locationPermission ?? null}, location_permission),
+        location_enabled = COALESCE(${locationEnabled ?? null}, location_enabled)
     WHERE id = ${device.id}`
   return c.body(null, 204)
 })

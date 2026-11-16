@@ -69,6 +69,55 @@ interface ApiService {
         @Body request: HeartbeatRequest,
     ): Response<Unit>
 
+    // ---- Phase 2: remote commands + security events ----
+
+    /** User token. 201 on first issue, 200 with the existing command on replay. */
+    @POST("api/v1/devices/{id}/commands")
+    suspend fun createCommand(
+        @Path("id") id: String,
+        @Body request: CreateCommandRequest,
+    ): Response<CommandDto>
+
+    /** User token. Newest first. */
+    @GET("api/v1/devices/{id}/commands")
+    suspend fun listCommands(
+        @Path("id") id: String,
+        @Query("limit") limit: Int,
+    ): Response<CommandsResponse>
+
+    /**
+     * Device token. Oldest first. Fetching marks the commands delivered
+     * server-side, so callers must ack each one after executing it.
+     */
+    @GET("api/v1/devices/{id}/commands/pending")
+    suspend fun pendingCommands(
+        @Header("Authorization") deviceAuth: String,
+        @Path("id") id: String,
+    ): Response<PendingCommandsResponse>
+
+    /** Device token. 204. */
+    @POST("api/v1/commands/{id}/ack")
+    suspend fun ackCommand(
+        @Header("Authorization") deviceAuth: String,
+        @Path("id") id: String,
+        @Body request: AckCommandRequest,
+    ): Response<Unit>
+
+    /** Device token. 201 with the accepted count. */
+    @POST("api/v1/devices/{id}/security-events")
+    suspend fun uploadSecurityEvents(
+        @Header("Authorization") deviceAuth: String,
+        @Path("id") id: String,
+        @Body request: SecurityEventsUploadRequest,
+    ): Response<SecurityEventsUploadResponse>
+
+    /** User token. Newest first. */
+    @GET("api/v1/devices/{id}/security-events")
+    suspend fun listSecurityEvents(
+        @Path("id") id: String,
+        @Query("limit") limit: Int,
+    ): Response<SecurityEventsResponse>
+
     @DELETE("api/v1/auth/account")
     suspend fun deleteAccount(@Body request: DeleteAccountRequest): Response<Unit>
 }

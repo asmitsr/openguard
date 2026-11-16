@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Device admin policies for OpenGuard. lockNow() needs no specific
+     policy, so uses-policies stays empty on purpose: no password policy
+     (dead since Android 9-11) and nothing else is requested. -->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies />
+</device-admin>

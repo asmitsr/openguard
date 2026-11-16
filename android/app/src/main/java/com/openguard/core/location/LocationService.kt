@@ -26,9 +26,11 @@ import com.openguard.R
 import com.openguard.core.common.TrackingConfig
 import com.openguard.core.database.AppDatabase
 import com.openguard.core.database.LocationEntity
+import com.openguard.core.security.SecurityEvents
 import java.time.Instant
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -107,7 +109,12 @@ class LocationService : Service() {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
         )
         if (!TrackingPermissions.hasFineLocation(this)) {
-            // Permission was revoked while tracking: stop instead of crashing.
+            // Permission was revoked while tracking: record the security
+            // event (NonCancellable so the insert survives stopSelf's
+            // scope cancellation), then stop instead of crashing.
+            scope.launch(NonCancellable) {
+                SecurityEvents.record(database, "location_permission_revoked", confirmed = true)
+            }
             stopSelf()
             return
         }

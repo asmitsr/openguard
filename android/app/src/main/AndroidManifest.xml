@@ -12,6 +12,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- Android 14 requires the per-type permission matching foregroundServiceType. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Ring vibrates while ringing. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- SIM-change detection reads the active subscription ids (consent step 4). -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!-- Lost Mode shows its screen over the lock screen via full-screen intent. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <application
         android:name=".OpenGuardApp"
@@ -31,10 +38,43 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".feature.security.LostModeActivity"
+            android:exported="false"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true" />
+
         <service
             android:name=".core.location.LocationService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <service
+            android:name=".core.security.RingService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <receiver
+            android:name=".core.security.OpenGuardDeviceAdmin"
+            android:exported="true"
+            android:label="@string/device_admin_label"
+            android:description="@string/device_admin_description"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+        </receiver>
+
+        <receiver
+            android:name=".core.security.SimChangeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.telephony.action.SIM_CARD_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

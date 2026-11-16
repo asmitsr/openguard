@@ -8,6 +8,7 @@ import com.openguard.core.network.ApiService
 import com.openguard.core.network.TokenStore
 import com.openguard.feature.auth.AuthRepository
 import com.openguard.feature.devices.DeviceRepository
+import com.openguard.feature.security.CommandRepository
 import org.maplibre.android.MapLibre
 
 /**
@@ -32,6 +33,8 @@ class OpenGuardApp : Application() {
     val authRepository: AuthRepository by lazy { AuthRepository(api, tokenStore) }
 
     val deviceRepository: DeviceRepository by lazy { DeviceRepository(api, tokenStore) }
+
+    val commandRepository: CommandRepository by lazy { CommandRepository(api) }
 
     override fun onCreate() {
         super.onCreate()

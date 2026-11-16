@@ -22,6 +22,7 @@ button:disabled{opacity:.5;cursor:default}
 .dev{border:1px solid #dde3ea;border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer}
 .dev.sel{border-color:#c6a46a;background:#fdf8ef}
 .dev b{display:block}.muted{color:#667085;font-size:13px}
+.badge{display:inline-block;background:#b3261e;color:#fff;font-size:11px;font-weight:600;border-radius:4px;padding:1px 6px;margin-left:6px}
 #token-box{display:none;background:#fff8e1;border:1px solid #c6a46a;border-radius:8px;padding:12px;margin-top:10px;word-break:break-all}
 #token-box code{font-size:14px}
 table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;padding:6px 4px;border-bottom:1px solid #eef1f4}
@@ -74,6 +75,25 @@ ul{margin:0;padding-left:18px;font-size:14px}.err{color:#b3261e;font-size:14px;m
       <button id="export-json-btn" class="secondary" disabled>Export JSON</button>
     </div>
   </section>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Command Center <span id="command-device" class="muted"></span></h2>
+      <input id="lost-message" placeholder="Lost message (shown on the phone)" maxlength="200">
+      <div class="row">
+        <button id="cmd-ring-btn" class="cmd-btn secondary" disabled>Ring</button>
+        <button id="cmd-lock-btn" class="cmd-btn secondary" disabled>Lock</button>
+        <button id="cmd-lost-on-btn" class="cmd-btn secondary" disabled>Lost Mode ON</button>
+        <button id="cmd-lost-off-btn" class="cmd-btn secondary" disabled>Lost Mode OFF</button>
+      </div>
+      <p class="muted" id="cmd-status">Select a device to send commands.</p>
+      <div id="command-list"></div>
+    </section>
+    <section class="card">
+      <h2>Alerts <span id="alert-device" class="muted"></span></h2>
+      <div id="alert-list"><p class="muted">Select a device to see its security alerts.</p></div>
+    </section>
+  </div>
 
   <div class="grid">
     <section class="card"><h2>Sessions</h2><div id="session-list"><p class="muted">Loading…</p></div></section>
@@ -261,17 +281,20 @@ async function loadDevices(){
       try{ devices[i]._latest = await api('/devices/' + devices[i].id + '/latest'); }catch(_){ devices[i]._latest = null; }
     }
     renderDevices(); drawMarkers();
-    if(selected && !devices.some(function(d){ return d.id === selected; })){ selected = null; }
+    if(selected && !devices.some(function(d){ return d.id === selected; })){ selected = null; setCommandButtons(false); }
   }catch(e){ $('device-list').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
 }
 function renderDevices(){
   if(!devices.length){ $('device-list').innerHTML = '<p class="muted">No devices yet. Add one below, then paste the token into the Android app.</p>'; return; }
   $('device-list').innerHTML = devices.map(function(d){
     return '<div class="dev' + (d.id === selected ? ' sel' : '') + '" data-id="' + esc(d.id) + '"><b>' + esc(d.name) + '</b>' +
+      (d.lost_mode ? '<span class="badge">LOST MODE</span>' : '') +
       '<span class="muted">' + esc(d.model || '') + (d.os_version ? ' · ' + esc(d.os_version) : '') + '</span><br>' +
       '<span class="muted">Last seen ' + relTime(d.last_seen_at) +
       (d.battery_level != null ? ' · Battery ' + d.battery_level + '%' + (d.battery_charging ? ' (charging)' : '') : '') +
-      (d.network_type ? ' · ' + esc(d.network_type) : '') + '</span><br>' +
+      (d.network_type ? ' · ' + esc(d.network_type) : '') +
+      (d.location_permission ? ' · Location permission: ' + esc(d.location_permission) : '') +
+      (d.location_enabled != null ? ' · Location ' + (d.location_enabled ? 'on' : 'off') : '') + '</span><br>' +
       '<button class="link unlink-btn" data-id="' + esc(d.id) + '">Unlink</button></div>';
   }).join('');
   document.querySelectorAll('.dev').forEach(function(el){
@@ -294,8 +317,13 @@ function selectDevice(id){
   renderDevices();
   var d = devices.find(function(x){ return x.id === id; });
   $('history-device').textContent = d ? '— ' + d.name : '';
+  $('command-device').textContent = d ? '— ' + d.name : '';
+  $('alert-device').textContent = d ? '— ' + d.name : '';
+  setCommandButtons(true);
   if(d && d._latest && map){ map.flyTo({center: [d._latest.longitude, d._latest.latitude], zoom: 14}); drawAccuracy(d._latest); }
   loadHistory(false);
+  loadCommands();
+  loadAlerts();
 }
 $('add-device-btn').onclick = async function(){
   var name = $('dev-name').value.trim();
@@ -347,6 +375,57 @@ async function exportData(format){
 }
 $('export-csv-btn').onclick = function(){ exportData('csv'); };
 $('export-json-btn').onclick = function(){ exportData('json'); };
+
+/* ---- Command Center + alerts ---- */
+function setCommandButtons(enabled){
+  document.querySelectorAll('.cmd-btn').forEach(function(b){ b.disabled = !enabled; });
+  if(!enabled) $('cmd-status').textContent = 'Select a device to send commands.';
+}
+async function sendCommand(action){
+  if(!selected) return;
+  var body = {action: action};
+  if(action === 'lost_mode_on'){
+    var msg = $('lost-message').value.trim();
+    if(msg) body.payload = {message: msg};
+  }
+  setCommandButtons(false);
+  $('cmd-status').textContent = 'Sending…';
+  try{
+    await api('/devices/' + selected + '/commands', {method: 'POST', body: body});
+    $('cmd-status').textContent = 'Command sent — the phone picks it up within ~15 minutes.';
+    loadCommands(); loadDevices();
+  }catch(e){ $('cmd-status').textContent = e.message; }
+  finally{ if(selected) setCommandButtons(true); }
+}
+$('cmd-ring-btn').onclick = function(){ sendCommand('ring'); };
+$('cmd-lock-btn').onclick = function(){ sendCommand('lock'); };
+$('cmd-lost-on-btn').onclick = function(){ sendCommand('lost_mode_on'); };
+$('cmd-lost-off-btn').onclick = function(){ sendCommand('lost_mode_off'); };
+async function loadCommands(){
+  if(!selected) return;
+  try{
+    var data = await api('/devices/' + selected + '/commands?limit=20');
+    var list = data.commands || [];
+    if(!list.length){ $('command-list').innerHTML = '<p class="muted">No commands sent yet.</p>'; return; }
+    $('command-list').innerHTML = '<table><tr><th>Action</th><th>Status</th><th>Time</th><th>Result</th></tr>' +
+      list.map(function(cmd){
+        return '<tr><td>' + esc(cmd.action) + '</td><td>' + esc(cmd.status) + '</td><td>' + esc(fmtTime(cmd.issued_at)) + '</td><td>' + esc(cmd.result || '—') + '</td></tr>';
+      }).join('') + '</table>';
+  }catch(e){ $('command-list').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
+}
+var EVENT_LABELS = {sim_changed: 'SIM changed — check if this was you', admin_disabled: 'Device admin disabled', location_permission_revoked: 'Location permission revoked', location_disabled: 'Location disabled', low_battery: 'Low battery', sync_gap: 'Sync gap'};
+async function loadAlerts(){
+  if(!selected) return;
+  try{
+    var data = await api('/devices/' + selected + '/security-events?limit=50');
+    var list = data.events || [];
+    if(!list.length){ $('alert-list').innerHTML = '<p class="muted">No security alerts for this device.</p>'; return; }
+    $('alert-list').innerHTML = '<ul>' + list.map(function(ev){
+      return '<li><b>' + esc(EVENT_LABELS[ev.event_type] || ev.event_type) + '</b> — ' + esc(fmtTime(ev.created_at)) +
+        ' <span class="muted">(' + (ev.confirmed ? 'Confirmed' : 'Indication') + ')</span></li>';
+    }).join('') + '</ul>';
+  }catch(e){ $('alert-list').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
+}
 
 /* ---- Sessions / audit / privacy ---- */
 async function loadSessions(){

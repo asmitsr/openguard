@@ -1,8 +1,9 @@
 import { db, type Env } from './db'
 
 // Append-only audit log. Events: register, login, logout, session_revoke,
-// device_register, device_unlink. (Account deletion has no surviving audit
-// row: audit_events.user_id cascades, so the row would be deleted with the user.)
+// device_register, device_unlink, command_create, command_ack, command_reject.
+// (Account deletion has no surviving audit row: audit_events.user_id cascades,
+// so the row would be deleted with the user.)
 export async function audit(
   env: Env,
   userId: string,
