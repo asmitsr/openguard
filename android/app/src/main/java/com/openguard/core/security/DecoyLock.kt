@@ -3,54 +3,24 @@ package com.openguard.core.security
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.util.TypedValue
+import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.LifecycleRegistry
-import androidx.lifecycle.ViewTreeLifecycleOwner
-import androidx.savedstate.SavedStateRegistry
-import androidx.savedstate.SavedStateRegistryController
-import androidx.savedstate.SavedStateRegistryOwner
-import androidx.savedstate.ViewTreeSavedStateRegistryOwner
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
 import com.openguard.R
 import com.openguard.feature.security.LostModeActivity
-import com.openguard.ui.OpenGuardTheme
-import com.openguard.ui.TintedIcon
-import kotlinx.coroutines.delay
 
 /**
  * Decoy lock: a full-screen overlay that looks like a lock screen. Shown
@@ -63,6 +33,15 @@ import kotlinx.coroutines.delay
  * The overlay is plainly OpenGuard's Lost Mode screen ("This phone is
  * lost" + the owner's message + "Protected by OpenGuard"). It never
  * hides that OpenGuard is running.
+ *
+ * Built with classic Android Views on purpose: a ComposeView outside an
+ * activity needs ViewTreeLifecycleOwner and ViewTreeSavedStateRegistryOwner,
+ * and those classes do not resolve on this project's compile classpath
+ * (lifecycle-runtime-ktx exposes lifecycle-runtime as runtime-only, and
+ * the savedstate ViewTree class is missing from the resolved artifact —
+ * two CI runs failed on exactly these four references). Views need no
+ * lifecycle or saved-state owners at all, so the overlay cannot hit
+ * that problem again. The UI is identical to the previous Compose one.
  *
  * HONEST LIMITS (verified against the official LayoutParams docs):
  * TYPE_APPLICATION_OVERLAY sits above all app windows but BELOW
@@ -84,8 +63,8 @@ object DecoyLock {
 
     @Volatile
     private var isShowing = false
-    private var viewRef: ComposeView? = null
-    private var ownersRef: OverlayOwners? = null
+    private var viewRef: View? = null
+    private var messageViewRef: TextView? = null
     private var expectingRemoval = false
     private var appContextRef: Context? = null
 
@@ -130,21 +109,15 @@ object DecoyLock {
     // Runs on the main thread only.
     private fun showNow(appContext: Context) {
         if (isShowing) {
-            // Already up: refresh the message (a second lost_mode_on may
-            // carry a new one).
-            viewRef?.setContent { DecoyContent(appContext) }
+            // Already up: refresh the message text only (a second
+            // lost_mode_on may carry a new one). The PIN state survives
+            // because the view is not rebuilt.
+            messageViewRef?.text = ownerMessage(appContext)
             return
         }
-        val owners = OverlayOwners()
-        val view = ComposeView(appContext).apply {
-            // Static set() on the ViewTree owner objects (not the
-            // View extension functions: the savedstate extension is
-            // absent from savedstate 1.2.1's artifact).
-            ViewTreeLifecycleOwner.set(this, owners)
-            ViewTreeSavedStateRegistryOwner.set(this, owners)
-            setContent { DecoyContent(appContext) }
-            addOnAttachStateChangeListener(detachListener)
-        }
+        val (view, messageView) = createDecoyView(appContext)
+        messageViewRef = messageView
+        view.addOnAttachStateChangeListener(detachListener)
         try {
             windowManager(appContext).addView(view, overlayParams())
         } catch (e: Exception) {
@@ -153,16 +126,13 @@ object DecoyLock {
             // fallback still shows the message.
             return
         }
-        owners.attach()
         viewRef = view
-        ownersRef = owners
         appContextRef = appContext
         isShowing = true
     }
 
     // Runs on the main thread only.
     private fun hideNow(appContext: Context) {
-        val owners = ownersRef
         val view = viewRef
         expectingRemoval = true
         try {
@@ -170,9 +140,8 @@ object DecoyLock {
         } catch (e: Exception) {
             // Already gone.
         }
-        owners?.detach()
         viewRef = null
-        ownersRef = null
+        messageViewRef = null
         appContextRef = null
         isShowing = false
         expectingRemoval = false
@@ -208,9 +177,8 @@ object DecoyLock {
     private val detachListener = object : View.OnAttachStateChangeListener {
         override fun onViewAttachedToWindow(v: View) {}
         override fun onViewDetachedFromWindow(v: View) {
-            ownersRef?.detach()
             viewRef = null
-            ownersRef = null
+            messageViewRef = null
             isShowing = false
             if (!expectingRemoval) {
                 val ctx = appContextRef
@@ -239,182 +207,219 @@ object DecoyLock {
         if (Looper.myLooper() == Looper.getMainLooper()) block()
         else mainHandler.post { block() }
     }
+
+    private fun ownerMessage(appContext: Context): String =
+        LostModeStore.message(appContext)?.takeIf { it.isNotBlank() }
+            ?: "Please return this phone to its owner."
 }
+
+// Brand colors (same as the Compose theme: Midnight Navy + Champagne Gold
+// + Soft Ivory), as raw ints because this file is outside Compose.
+private const val COLOR_BG = 0xFF101B2D
+private const val COLOR_CARD = 0xFF192A40
+private const val COLOR_TEXT = 0xFFF4F3EF
+private const val COLOR_SECONDARY = 0xFFA7B2C2
+private const val COLOR_GOLD = 0xFFC6A46A
+private const val COLOR_OUTLINE = 0xFF344358
+private const val COLOR_ERROR = 0xFFCF6679
+
+private fun Context.dp(value: Int): Int =
+    TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_DIP,
+        value.toFloat(),
+        resources.displayMetrics,
+    ).toInt()
+
+private fun circleDrawable(color: Int): GradientDrawable =
+    GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(color)
+    }
 
 /**
- * View-tree owners for the overlay's ComposeView. A ComposeView outside
- * an activity needs a LifecycleOwner and a SavedStateRegistryOwner, or
- * setContent throws. detach() is idempotent: both the intentional hide
- * path and the detach listener call it.
+ * Builds the fake lock screen: the owner's message, a PIN pad, and an
+ * error that always appears. No entered code ever unlocks — the only
+ * exits are the remote lost_mode_off command or the hidden owner-exit
+ * (long-press the shield icon, then the device credential check).
+ * PIN state lives in this call's closure; the view is built once per
+ * show, and message refreshes update the message TextView only.
  */
-private class OverlayOwners : LifecycleOwner, SavedStateRegistryOwner {
-    private val lifecycleRegistry = LifecycleRegistry(this)
-    private val savedStateRegistryController = SavedStateRegistryController.create(this)
-    private var destroyed = false
+private fun createDecoyView(appContext: Context): Pair<View, TextView> {
+    var pin = ""
+    var wrong = false
 
-    override val lifecycle: Lifecycle get() = lifecycleRegistry
-    override val savedStateRegistry: SavedStateRegistry
-        get() = savedStateRegistryController.savedStateRegistry
-
-    fun attach() {
-        savedStateRegistryController.performAttach()
-        savedStateRegistryController.performRestore(null)
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+    fun textView(
+        text: String,
+        sizeSp: Float,
+        color: Int,
+        bold: Boolean = false,
+    ): TextView = TextView(appContext).apply {
+        this.text = text
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp)
+        setTextColor(color)
+        gravity = Gravity.CENTER
+        if (bold) typeface = Typeface.DEFAULT_BOLD
     }
 
-    fun detach() {
-        if (destroyed) return
-        destroyed = true
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
-        lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+    val root = LinearLayout(appContext).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        setBackgroundColor(COLOR_BG.toInt())
+        val pad = appContext.dp(24)
+        setPadding(pad, pad, pad, pad)
     }
-}
 
-@Composable
-private fun DecoyContent(appContext: Context) {
-    OpenGuardTheme {
-        DecoyLockContent(
-            message = LostModeStore.message(appContext),
-            onOwnerExit = { DecoyLock.exitToLostModeScreen(appContext) },
+    fun spacer(heightDp: Int) {
+        root.addView(
+            View(appContext),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                appContext.dp(heightDp),
+            ),
         )
     }
-}
 
-/**
- * The fake lock screen: the owner's message, a PIN pad, and an error
- * that always appears. No entered code ever unlocks — the only exits
- * are the remote lost_mode_off command or the hidden owner-exit
- * (long-press the shield icon, then the device credential check).
- */
-@Composable
-private fun DecoyLockContent(
-    message: String?,
-    onOwnerExit: () -> Unit,
-) {
-    var pin by remember { mutableStateOf("") }
-    var wrong by remember { mutableStateOf(false) }
-    LaunchedEffect(wrong) {
-        if (wrong) {
-            delay(900)
-            pin = ""
-            wrong = false
+    spacer(32)
+    // Hidden owner-exit: long-press the shield. No visible hint — a
+    // stranger must not find it by looking.
+    val shield = ImageView(appContext).apply {
+        setImageResource(R.drawable.ic_shield)
+        setColorFilter(COLOR_GOLD.toInt())
+        layoutParams = LinearLayout.LayoutParams(
+            appContext.dp(64),
+            appContext.dp(64),
+        )
+        isClickable = true
+        isLongClickable = true
+        setOnLongClickListener {
+            DecoyLock.exitToLostModeScreen(appContext)
+            true
         }
+    }
+    root.addView(shield)
+    spacer(24)
+    root.addView(textView("This phone is lost", 24f, COLOR_TEXT.toInt(), bold = true))
+    spacer(16)
+    val messageView = textView(
+        LostModeStore.message(appContext)?.takeIf { it.isNotBlank() }
+            ?: "Please return this phone to its owner.",
+        16f,
+        COLOR_TEXT.toInt(),
+    )
+    root.addView(messageView)
+
+    // Flexible space: pushes the PIN pad to the bottom.
+    root.addView(
+        View(appContext),
+        LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            0,
+            1f,
+        ),
+    )
+
+    val statusView = textView("Enter PIN to unlock", 14f, COLOR_SECONDARY.toInt())
+    root.addView(statusView)
+    spacer(12)
+
+    val dotsRow = LinearLayout(appContext).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER
+    }
+    val dots = (0 until 4).map {
+        View(appContext).apply {
+            background = circleDrawable(COLOR_OUTLINE.toInt())
+            val size = appContext.dp(16)
+            val margin = appContext.dp(8)
+            layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                setMargins(margin, 0, margin, 0)
+            }
+        }.also { dotsRow.addView(it) }
+    }
+    root.addView(dotsRow)
+    spacer(24)
+
+    fun refreshDots() {
+        dots.forEachIndexed { index, dot ->
+            dot.background = circleDrawable(
+                if (index < pin.length) COLOR_TEXT.toInt() else COLOR_OUTLINE.toInt(),
+            )
+        }
+    }
+
+    val clearWrong = Runnable {
+        pin = ""
+        wrong = false
+        statusView.text = "Enter PIN to unlock"
+        statusView.setTextColor(COLOR_SECONDARY.toInt())
+        refreshDots()
     }
 
     fun pressDigit(digit: String) {
         if (wrong || pin.length >= 4) return
-        val next = pin + digit
-        pin = next
+        pin += digit
+        refreshDots()
         // Always wrong — the decoy never unlocks.
-        if (next.length == 4) wrong = true
+        if (pin.length == 4) {
+            wrong = true
+            statusView.text = "Wrong PIN — try again"
+            statusView.setTextColor(COLOR_ERROR.toInt())
+            Handler(Looper.getMainLooper()).postDelayed(clearWrong, 900)
+        }
     }
 
     fun pressBackspace() {
-        if (!wrong) pin = pin.dropLast(1)
+        if (!wrong) {
+            pin = pin.dropLast(1)
+            refreshDots()
+        }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Spacer(Modifier.height(32.dp))
-        // Hidden owner-exit: long-press the shield. No visible hint — a
-        // stranger must not find it by looking.
-        Box(
-            modifier = Modifier.pointerInput(Unit) {
-                detectTapGestures(onLongPress = { onOwnerExit() })
-            },
-        ) {
-            TintedIcon(R.drawable.ic_shield, size = 64.dp, iconSize = 32.dp)
-        }
-        Spacer(Modifier.height(24.dp))
-        Text(
-            "This phone is lost",
-            style = MaterialTheme.typography.headlineMedium,
-            textAlign = TextAlign.Center,
-        )
-        Spacer(Modifier.height(16.dp))
-        Text(
-            message?.takeIf { it.isNotBlank() }
-                ?: "Please return this phone to its owner.",
-            style = MaterialTheme.typography.bodyLarge,
-            textAlign = TextAlign.Center,
-        )
-        Spacer(Modifier.weight(1f))
-        if (wrong) {
-            Text(
-                "Wrong PIN — try again",
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodyMedium,
-            )
-        } else {
-            Text(
-                "Enter PIN to unlock",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Spacer(Modifier.height(12.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            repeat(4) { index ->
-                Box(
-                    modifier = Modifier
-                        .size(16.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (index < pin.length) {
-                                MaterialTheme.colorScheme.onBackground
-                            } else {
-                                MaterialTheme.colorScheme.outlineVariant
-                            },
-                        ),
-                )
+    fun pinKey(label: String, onClick: () -> Unit): TextView =
+        textView(label, 24f, COLOR_TEXT.toInt()).apply {
+            background = circleDrawable(COLOR_CARD.toInt())
+            gravity = Gravity.CENTER
+            val size = appContext.dp(72)
+            val margin = appContext.dp(12)
+            layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                setMargins(margin, 0, margin, 0)
             }
+            isClickable = true
+            setOnClickListener { onClick() }
         }
-        Spacer(Modifier.height(24.dp))
-        val keys = listOf(
-            listOf("1", "2", "3"),
-            listOf("4", "5", "6"),
-            listOf("7", "8", "9"),
-            listOf("", "0", "⌫"),
-        )
-        keys.forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                row.forEach { key ->
-                    when (key) {
-                        "" -> Spacer(Modifier.size(72.dp))
-                        "⌫" -> PinKey("⌫") { pressBackspace() }
-                        else -> PinKey(key) { pressDigit(key) }
-                    }
+
+    val keys = listOf(
+        listOf("1", "2", "3"),
+        listOf("4", "5", "6"),
+        listOf("7", "8", "9"),
+        listOf("", "0", "⌫"),
+    )
+    keys.forEach { row ->
+        val rowLayout = LinearLayout(appContext).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        row.forEach { key ->
+            when (key) {
+                "" -> {
+                    val size = appContext.dp(72)
+                    val margin = appContext.dp(12)
+                    rowLayout.addView(
+                        View(appContext),
+                        LinearLayout.LayoutParams(size, size).apply {
+                            setMargins(margin, 0, margin, 0)
+                        },
+                    )
                 }
+                "⌫" -> rowLayout.addView(pinKey("⌫") { pressBackspace() })
+                else -> rowLayout.addView(pinKey(key) { pressDigit(key) })
             }
-            Spacer(Modifier.height(16.dp))
         }
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Protected by OpenGuard",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        root.addView(rowLayout)
+        spacer(16)
     }
-}
+    spacer(8)
+    root.addView(textView("Protected by OpenGuard", 12f, COLOR_SECONDARY.toInt()))
 
-@Composable
-private fun PinKey(label: String, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .size(72.dp)
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(label, style = MaterialTheme.typography.titleLarge)
-    }
+    return root to messageView
 }
