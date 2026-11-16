@@ -96,7 +96,7 @@ object WifiReconnect {
     fun suggestedSsids(context: Context): List<String> {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return emptyList()
         return runCatching {
-            wifiManager(context).networkSuggestions.map { it.ssid }
+            wifiManager(context).networkSuggestions.mapNotNull { it.ssid }
         }.getOrDefault(emptyList())
     }
 
