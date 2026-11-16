@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenGuard — Device Tracker</title>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#f4f6f8;color:#1a2332;line-height:1.45}
+header{background:#101b2d;color:#f4f3ef;padding:12px 16px;display:flex;justify-content:space-between;align-items:center}
+header h1{font-size:18px;margin:0}header h1 span{color:#c6a46a}
+main{max-width:1000px;margin:0 auto;padding:12px}
+.card{background:#fff;border:1px solid #dde3ea;border-radius:10px;padding:14px;margin-bottom:12px}
+h2{font-size:16px;margin:0 0 10px}h3{font-size:14px;margin:14px 0 8px}
+input,button{font:inherit;padding:9px 10px;border-radius:8px;border:1px solid #c9d2dc;width:100%}
+input{margin-bottom:8px}button{background:#101b2d;color:#fff;border:none;cursor:pointer;width:auto}
+button.secondary{background:#e8ecf0;color:#1a2332}button.danger{background:#b3261e}
+button:disabled{opacity:.5;cursor:default}
+.row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1 1 120px}
+#map{height:380px;border-radius:10px;border:1px solid #dde3ea}
+.dev{border:1px solid #dde3ea;border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer}
+.dev.sel{border-color:#c6a46a;background:#fdf8ef}
+.dev b{display:block}.muted{color:#667085;font-size:13px}
+#token-box{display:none;background:#fff8e1;border:1px solid #c6a46a;border-radius:8px;padding:12px;margin-top:10px;word-break:break-all}
+#token-box code{font-size:14px}
+table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;padding:6px 4px;border-bottom:1px solid #eef1f4}
+ul{margin:0;padding-left:18px;font-size:14px}.err{color:#b3261e;font-size:14px;min-height:1.2em}
+.link{background:none;color:#1a5fb4;padding:0;text-decoration:underline;width:auto}
+.grid{display:grid;gap:12px}@media(min-width:700px){.grid{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<header><h1>OpenGuard <span>• free device tracking</span></h1><button id="logout-btn" class="secondary" style="display:none">Log out</button></header>
+<main>
+<!-- Auth -->
+<section id="auth-view" class="card">
+  <h2 id="auth-title">Log in</h2>
+  <p class="err" id="auth-err"></p>
+  <input id="email" type="email" placeholder="Email" autocomplete="email">
+  <input id="password" type="password" placeholder="Password" autocomplete="current-password">
+  <div class="row"><button id="auth-submit">Log in</button></div>
+  <p class="muted"><button class="link" id="auth-toggle">Create an account instead</button></p>
+</section>
+
+<!-- App -->
+<div id="app-view" style="display:none">
+  <section class="card">
+    <h2>Devices</h2>
+    <div id="device-list"><p class="muted">Loading…</p></div>
+    <h3>Add device</h3>
+    <div class="row">
+      <input id="dev-name" placeholder="Name (e.g. My phone)">
+      <input id="dev-model" placeholder="Model (e.g. Infinix Hot 60 Pro+)">
+      <input id="dev-os" placeholder="OS version (e.g. Android 15)">
+    </div>
+    <button id="add-device-btn">Add device</button>
+    <p class="err" id="dev-err"></p>
+    <div id="token-box"><b>Device token — shown once only.</b><br>Paste this into the OpenGuard Android app:<br><code id="token-value"></code></div>
+  </section>
+
+  <section class="card">
+    <h2>Map</h2>
+    <div id="map"></div>
+    <p class="muted">Map data © OpenStreetMap contributors. Select a device to centre it and see its accuracy circle.</p>
+  </section>
+
+  <section class="card">
+    <h2>History <span id="history-device" class="muted"></span></h2>
+    <div id="history-list"><p class="muted">Select a device to see its location history.</p></div>
+    <div class="row" style="margin-top:10px">
+      <button id="load-more-btn" class="secondary" disabled>Load more</button>
+      <button id="export-csv-btn" class="secondary" disabled>Export CSV</button>
+      <button id="export-json-btn" class="secondary" disabled>Export JSON</button>
+    </div>
+  </section>
+
+  <div class="grid">
+    <section class="card"><h2>Sessions</h2><div id="session-list"><p class="muted">Loading…</p></div></section>
+    <section class="card"><h2>Audit log</h2><div id="audit-list"><p class="muted">Loading…</p></div></section>
+  </div>
+
+  <section class="card">
+    <h2>Privacy</h2>
+    <div id="privacy-box"><p class="muted">Loading…</p></div>
+    <h3>Delete account</h3>
+    <p class="muted">Permanently deletes your account, devices and locations.</p>
+    <input id="delete-password" type="password" placeholder="Confirm with your password">
+    <button id="delete-account-btn" class="danger">Delete my account</button>
+    <p class="err" id="delete-err"></p>
+  </section>
+</div>
+</main>
+<script>
+var $ = function(id){ return document.getElementById(id); };
+var access = localStorage.getItem('openguard_access');
+var refresh = localStorage.getItem('openguard_refresh');
+var devices = [], selected = null, markers = {}, nextBefore = null, historyLocs = [];
+var map = null, mapReady = false, isRegister = false;
+
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function relTime(iso){
+  if(!iso) return 'never';
+  var s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if(s < 60) return 'just now';
+  if(s < 3600) return Math.floor(s / 60) + ' min ago';
+  if(s < 86400) return Math.floor(s / 3600) + ' h ago';
+  return Math.floor(s / 86400) + ' d ago';
+}
+function fmtTime(iso){ return iso ? new Date(iso).toLocaleString() : '—'; }
+
+/* Client-side KDF: the server never sees the password. The client derives a
+   32-byte key with PBKDF2-SHA256 (600k iterations) from password + salt and
+   sends only the hex-encoded derived key. */
+function hex(bytes){ return Array.from(bytes).map(function(b){ return b.toString(16).padStart(2, '0'); }).join(''); }
+function unhex(s){ var out = new Uint8Array(s.length / 2); for(var i = 0; i < out.length; i++) out[i] = parseInt(s.slice(i * 2, i * 2 + 2), 16); return out; }
+async function deriveKey(password, saltHex){
+  var key = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  var bits = await crypto.subtle.deriveBits({name: 'PBKDF2', salt: unhex(saltHex), iterations: 600000, hash: 'SHA-256'}, key, 256);
+  return hex(new Uint8Array(bits));
+}
+
+async function api(path, opts){
+  opts = opts || {};
+  opts.headers = opts.headers || {};
+  if(access) opts.headers['Authorization'] = 'Bearer ' + access;
+  if(opts.body && typeof opts.body === 'object'){ opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(opts.body); }
+  var res = await fetch('/api/v1' + path, opts);
+  if(res.status === 401 && refresh && !opts._retried){
+    var r = await fetch('/api/v1/auth/refresh', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({refresh_token: refresh})});
+    if(r.ok){
+      var t = await r.json();
+      access = t.access_token; refresh = t.refresh_token;
+      localStorage.setItem('openguard_access', access);
+      localStorage.setItem('openguard_refresh', refresh);
+      opts._retried = true;
+      return api(path, opts);
+    }
+    showAuth();
+    throw new Error('Session expired — please log in again.');
+  }
+  if(!res.ok){
+    var msg = 'Request failed (' + res.status + ')';
+    try { var e = await res.json(); if(e.error) msg = e.error; } catch(_){}
+    throw new Error(msg);
+  }
+  if(res.status === 204) return null;
+  return res.json();
+}
+
+function showAuth(){
+  access = null; refresh = null;
+  localStorage.removeItem('openguard_access'); localStorage.removeItem('openguard_refresh');
+  localStorage.removeItem('openguard_email');
+  $('auth-view').style.display = 'block'; $('app-view').style.display = 'none'; $('logout-btn').style.display = 'none';
+}
+function showApp(){
+  $('auth-view').style.display = 'none'; $('app-view').style.display = 'block'; $('logout-btn').style.display = 'inline-block';
+  initMap();
+  loadDevices(); loadSessions(); loadAudit(); loadPrivacy();
+}
+
+$('auth-toggle').onclick = function(){
+  isRegister = !isRegister;
+  $('auth-title').textContent = isRegister ? 'Create account' : 'Log in';
+  $('auth-submit').textContent = isRegister ? 'Register' : 'Log in';
+  $('auth-toggle').textContent = isRegister ? 'Log in instead' : 'Create an account instead';
+  $('auth-err').textContent = '';
+};
+$('auth-submit').onclick = async function(){
+  var email = $('email').value.trim(), password = $('password').value;
+  if(!email || !password){ $('auth-err').textContent = 'Enter email and password.'; return; }
+  if(isRegister && password.length < 8){ $('auth-err').textContent = 'Password must be at least 8 characters.'; return; }
+  var btn = $('auth-submit');
+  btn.disabled = true; btn.textContent = 'Verifying…';
+  try{
+    var body;
+    if(isRegister){
+      var salt = hex(crypto.getRandomValues(new Uint8Array(16)));
+      body = {email: email, salt: salt, derived_key: await deriveKey(password, salt)};
+    } else {
+      var s = await api('/auth/salt?email=' + encodeURIComponent(email));
+      body = {email: email, derived_key: await deriveKey(password, s.salt)};
+    }
+    var d = await api(isRegister ? '/auth/register' : '/auth/login', {method:'POST', body: body});
+    access = d.access_token; refresh = d.refresh_token;
+    localStorage.setItem('openguard_access', access);
+    localStorage.setItem('openguard_refresh', refresh);
+    localStorage.setItem('openguard_email', email);
+    $('auth-err').textContent = ''; showApp();
+  }catch(e){ $('auth-err').textContent = e.message; }
+  finally{ btn.disabled = false; btn.textContent = isRegister ? 'Register' : 'Log in'; }
+};
+$('logout-btn').onclick = async function(){
+  try{ await api('/auth/logout', {method:'POST'}); }catch(_){}
+  showAuth();
+};
+
+/* ---- Map ---- */
+function initMap(){
+  if(map) { map.resize(); return; }
+  map = new maplibregl.Map({
+    container: 'map',
+    style: {version: 8, sources: {osm: {type: 'raster', tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], tileSize: 256, attribution: '© OpenStreetMap contributors'}}, layers: [{id: 'osm', type: 'raster', source: 'osm'}]},
+    center: [90.4, 23.8], zoom: 5
+  });
+  map.addControl(new maplibregl.NavigationControl());
+  map.addControl(new maplibregl.AttributionControl({compact: true}));
+  map.on('load', function(){
+    map.addSource('accuracy', {type: 'geojson', data: {type: 'FeatureCollection', features: []}});
+    map.addLayer({id: 'accuracy', type: 'fill', source: 'accuracy', paint: {'fill-color': '#1a5fb4', 'fill-opacity': 0.15}});
+    map.addSource('path', {type: 'geojson', data: {type: 'FeatureCollection', features: []}});
+    map.addLayer({id: 'path', type: 'line', source: 'path', paint: {'line-color': '#1a5fb4', 'line-width': 2}});
+    mapReady = true;
+    drawMarkers();
+    // A device may already be selected (and history loaded) before the map
+    // finished loading; those draws no-op'd on mapReady, so redo them now.
+    var sel = devices.find(function(x){ return x.id === selected; });
+    if(sel && sel._latest) drawAccuracy(sel._latest);
+    drawPath();
+  });
+}
+function circleFeature(lat, lon, meters){
+  var pts = [], R = 6378137;
+  for(var i = 0; i <= 64; i++){
+    var a = (i / 64) * 2 * Math.PI;
+    var dLat = (meters / R) * Math.cos(a);
+    var dLon = (meters / (R * Math.cos(lat * Math.PI / 180))) * Math.sin(a);
+    pts.push([lon + dLon * 180 / Math.PI, lat + dLat * 180 / Math.PI]);
+  }
+  return {type: 'Feature', geometry: {type: 'Polygon', coordinates: [pts]}};
+}
+function drawMarkers(){
+  if(!mapReady) return;
+  Object.keys(markers).forEach(function(id){ markers[id].remove(); });
+  markers = {};
+  devices.forEach(function(d){
+    if(!d._latest) return;
+    var m = new maplibregl.Marker().setLngLat([d._latest.longitude, d._latest.latitude]).addTo(map);
+    m.getElement().addEventListener('click', function(){ selectDevice(d.id); });
+    markers[d.id] = m;
+  });
+}
+function drawAccuracy(loc){
+  if(!mapReady) return;
+  var feats = loc ? [circleFeature(loc.latitude, loc.longitude, loc.accuracy || 50)] : [];
+  map.getSource('accuracy').setData({type: 'FeatureCollection', features: feats});
+}
+function drawPath(){
+  if(!mapReady) return;
+  var coords = historyLocs.map(function(l){ return [l.longitude, l.latitude]; });
+  var feats = coords.length > 1 ? [{type: 'Feature', geometry: {type: 'LineString', coordinates: coords}}] : [];
+  map.getSource('path').setData({type: 'FeatureCollection', features: feats});
+}
+
+/* ---- Devices ---- */
+async function loadDevices(){
+  try{
+    devices = await api('/devices');
+    for(var i = 0; i < devices.length; i++){
+      try{ devices[i]._latest = await api('/devices/' + devices[i].id + '/latest'); }catch(_){ devices[i]._latest = null; }
+    }
+    renderDevices(); drawMarkers();
+    if(selected && !devices.some(function(d){ return d.id === selected; })){ selected = null; }
+  }catch(e){ $('device-list').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
+}
+function renderDevices(){
+  if(!devices.length){ $('device-list').innerHTML = '<p class="muted">No devices yet. Add one below, then paste the token into the Android app.</p>'; return; }
+  $('device-list').innerHTML = devices.map(function(d){
+    return '<div class="dev' + (d.id === selected ? ' sel' : '') + '" data-id="' + esc(d.id) + '"><b>' + esc(d.name) + '</b>' +
+      '<span class="muted">' + esc(d.model || '') + (d.os_version ? ' · ' + esc(d.os_version) : '') + '</span><br>' +
+      '<span class="muted">Last seen ' + relTime(d.last_seen_at) +
+      (d.battery_level != null ? ' · Battery ' + d.battery_level + '%' + (d.battery_charging ? ' (charging)' : '') : '') +
+      (d.network_type ? ' · ' + esc(d.network_type) : '') + '</span><br>' +
+      '<button class="link unlink-btn" data-id="' + esc(d.id) + '">Unlink</button></div>';
+  }).join('');
+  document.querySelectorAll('.dev').forEach(function(el){
+    el.addEventListener('click', function(ev){
+      if(ev.target.classList.contains('unlink-btn')) return;
+      selectDevice(el.getAttribute('data-id'));
+    });
+  });
+  document.querySelectorAll('.unlink-btn').forEach(function(btn){
+    btn.addEventListener('click', async function(ev){
+      ev.stopPropagation();
+      var id = btn.getAttribute('data-id');
+      if(!confirm('Unlink this device? Its location history will be deleted too.')) return;
+      try{ await api('/devices/' + id, {method: 'DELETE'}); loadDevices(); loadPrivacy(); }catch(e){ $('dev-err').textContent = e.message; }
+    });
+  });
+}
+function selectDevice(id){
+  selected = id;
+  renderDevices();
+  var d = devices.find(function(x){ return x.id === id; });
+  $('history-device').textContent = d ? '— ' + d.name : '';
+  if(d && d._latest && map){ map.flyTo({center: [d._latest.longitude, d._latest.latitude], zoom: 14}); drawAccuracy(d._latest); }
+  loadHistory(false);
+}
+$('add-device-btn').onclick = async function(){
+  var name = $('dev-name').value.trim();
+  if(!name){ $('dev-err').textContent = 'Give the device a name.'; return; }
+  try{
+    var d = await api('/devices', {method: 'POST', body: {name: name, model: $('dev-model').value.trim(), os_version: $('dev-os').value.trim()}});
+    $('dev-err').textContent = '';
+    $('token-value').textContent = d.device_token;
+    $('token-box').style.display = 'block';
+    $('dev-name').value = ''; $('dev-model').value = ''; $('dev-os').value = '';
+    loadDevices(); loadPrivacy();
+  }catch(e){ $('dev-err').textContent = e.message; }
+};
+
+/* ---- History + export ---- */
+async function loadHistory(more){
+  if(!selected) return;
+  try{
+    var q = '?limit=100' + (more && nextBefore ? '&before=' + encodeURIComponent(nextBefore) : '');
+    var data = await api('/devices/' + selected + '/locations' + q);
+    if(!more) historyLocs = [];
+    historyLocs = historyLocs.concat(data.locations || []);
+    nextBefore = data.next_before || null;
+    $('load-more-btn').disabled = !nextBefore;
+    $('export-csv-btn').disabled = false; $('export-json-btn').disabled = false;
+    renderHistory(); drawPath();
+  }catch(e){ $('history-list').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
+}
+function renderHistory(){
+  if(!historyLocs.length){ $('history-list').innerHTML = '<p class="muted">No locations recorded yet for this device.</p>'; return; }
+  $('history-list').innerHTML = '<table><tr><th>Time</th><th>Accuracy</th><th>Provider</th></tr>' +
+    historyLocs.map(function(l){
+      return '<tr><td>' + esc(fmtTime(l.recorded_at)) + '</td><td>±' + esc(l.accuracy) + ' m</td><td>' + esc(l.provider || '—') + '</td></tr>';
+    }).join('') + '</table>';
+}
+$('load-more-btn').onclick = function(){ loadHistory(true); };
+async function exportData(format){
+  if(!selected) return;
+  try{
+    var res = await fetch('/api/v1/devices/' + selected + '/export?format=' + format, {headers: {'Authorization': 'Bearer ' + access}});
+    if(!res.ok) throw new Error('Export failed (' + res.status + ')');
+    var blob = await res.blob();
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'openguard-' + selected + '.' + format;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 5000);
+  }catch(e){ alert(e.message); }
+}
+$('export-csv-btn').onclick = function(){ exportData('csv'); };
+$('export-json-btn').onclick = function(){ exportData('json'); };
+
+/* ---- Sessions / audit / privacy ---- */
+async function loadSessions(){
+  try{
+    var list = await api('/auth/sessions');
+    if(!list.length){ $('session-list').innerHTML = '<p class="muted">No sessions.</p>'; return; }
+    $('session-list').innerHTML = list.map(function(s){
+      return '<div style="margin-bottom:10px"><b>' + esc(s.user_agent || 'Unknown device') + '</b><br>' +
+        '<span class="muted">' + esc(s.ip || '') + ' · created ' + esc(fmtTime(s.created_at)) + ' · last used ' + relTime(s.last_used_at) +
+        (s.current ? ' · <b>current</b>' : '') + '</span>' +
+        (s.current ? '' : ' <button class="link revoke-btn" data-id="' + esc(s.id) + '">Revoke</button>') + '</div>';
+    }).join('');
+    document.querySelectorAll('.revoke-btn').forEach(function(btn){
+      btn.addEventListener('click', async function(){
+        try{ await api('/auth/sessions/' + btn.getAttribute('data-id'), {method: 'DELETE'}); loadSessions(); }
+        catch(e){ alert(e.message); }
+      });
+    });
+  }catch(e){ $('session-list').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
+}
+async function loadAudit(){
+  try{
+    var list = await api('/audit');
+    if(!list.length){ $('audit-list').innerHTML = '<p class="muted">No audit events yet.</p>'; return; }
+    $('audit-list').innerHTML = '<ul>' + list.map(function(a){
+      return '<li><b>' + esc(a.event) + '</b> — ' + esc(fmtTime(a.created_at)) + (a.detail ? '<br><span class="muted">' + esc(a.detail) + '</span>' : '') + '</li>';
+    }).join('') + '</ul>';
+  }catch(e){ $('audit-list').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
+}
+async function loadPrivacy(){
+  try{
+    var p = await api('/privacy');
+    var list = function(arr){ return (arr && arr.length) ? '<ul>' + arr.map(function(x){ return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '<p class="muted">None.</p>'; };
+    $('privacy-box').innerHTML =
+      '<p>Retention: <b>' + esc(p.retention_days) + ' days</b> · Locations stored: <b>' + esc(p.location_count) + '</b> · Devices: <b>' + esc(p.device_count) + '</b></p>' +
+      '<h3>Data stored on the server</h3>' + list(p.server_data) +
+      '<h3>Third parties</h3>' + list(p.third_parties);
+  }catch(e){ $('privacy-box').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
+}
+/* Two-click inline confirmation: native confirm() is auto-dismissed by
+   automated browsers (and is easy to miss), which made the button silently
+   do nothing. First click arms, second click within 10 s deletes. */
+var deleteArmed = false, deleteArmTimer = null;
+$('delete-account-btn').onclick = async function(){
+  var pw = $('delete-password').value;
+  if(!pw){ $('delete-err').textContent = 'Enter your password to confirm.'; return; }
+  var btn = $('delete-account-btn');
+  if(!deleteArmed){
+    deleteArmed = true;
+    btn.textContent = 'Click again to confirm deletion';
+    $('delete-err').textContent = 'This cannot be undone. Click the button again to confirm.';
+    clearTimeout(deleteArmTimer);
+    deleteArmTimer = setTimeout(function(){ deleteArmed = false; btn.textContent = 'Delete my account'; $('delete-err').textContent = ''; }, 10000);
+    return;
+  }
+  deleteArmed = false; clearTimeout(deleteArmTimer);
+  var email = localStorage.getItem('openguard_email');
+  if(!email){ $('delete-err').textContent = 'Could not find your email — please log in again.'; return; }
+  btn.disabled = true; btn.textContent = 'Verifying…';
+  try{
+    var s = await api('/auth/salt?email=' + encodeURIComponent(email));
+    await api('/auth/account', {method: 'DELETE', body: {derived_key: await deriveKey(pw, s.salt)}});
+    showAuth();
+  }catch(e){ $('delete-err').textContent = e.message; }
+  finally{ btn.disabled = false; btn.textContent = 'Delete my account'; }
+};
+
+/* ---- Boot ---- */
+if(access) showApp(); else showAuth();
+</script>
+</body>
+</html>

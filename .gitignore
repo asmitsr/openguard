@@ -1,0 +1,20 @@
+# Node / Workers
+node_modules/
+.wrangler/
+.dev.vars
+
+# Android
+*.iml
+.gradle/
+local.properties
+build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+
+# OS / editor
+.DS_Store
+.idea/
+*.swp

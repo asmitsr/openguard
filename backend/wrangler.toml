@@ -1,0 +1,16 @@
+name = "openguard-api"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+
+# DATABASE_URL is set as a secret by the operator:
+#   wrangler secret put DATABASE_URL
+# Never put it, or any secret, in this file.
+
+[[rules]]
+type = "Text"
+globs = ["public/*.html"]
+# fallthrough keeps the default Text rule (**/*.txt, **/*.html) alive:
+# without it, this rule shadows the default by type and wrangler drops
+# it (with a warning). The import matches this rule first; the default
+# stays for any other .txt/.html file.
+fallthrough = true

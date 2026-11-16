@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">OpenGuard</string>
+    <string name="tracking_channel_name">Location tracking</string>
+    <string name="tracking_channel_description">Shows while OpenGuard is tracking this device.</string>
+    <string name="tracking_notification_title">OpenGuard is tracking this device</string>
+    <string name="tracking_notification_text">Your location is being recorded. Tap to open OpenGuard, or stop tracking anytime.</string>
+    <string name="tracking_notification_stop">Stop tracking</string>
+</resources>
