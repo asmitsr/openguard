@@ -7,14 +7,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -23,13 +19,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.openguard.R
 import com.openguard.core.network.LocationDto
+import com.openguard.ui.ErrorText
+import com.openguard.ui.GuardButton
+import com.openguard.ui.GuardTopBar
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.maps.MapLibreMap
@@ -67,7 +68,6 @@ private const val OSM_STYLE_JSON = """
 private const val MARKER_SOURCE_ID = "marker-source"
 private const val MARKER_LAYER_ID = "marker-layer"
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MapScreen(
     deviceId: String,
@@ -80,20 +80,14 @@ fun MapScreen(
     LaunchedEffect(deviceId) { viewModel.loadLatest(deviceId) }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(deviceName) },
-                navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
-            )
-        },
+        topBar = { GuardTopBar(title = deviceName, onBack = onBack) },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when {
                     state.isLoading -> CircularProgressIndicator(Modifier.padding(16.dp))
-                    state.error != null -> Text(
+                    state.error != null -> ErrorText(
                         state.error ?: "Could not load the location.",
-                        color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.padding(16.dp),
                     )
                     state.latest == null -> Text(
@@ -106,14 +100,15 @@ fun MapScreen(
             Text(
                 "© OpenStreetMap contributors",
                 style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             )
-            Button(
+            GuardButton(
                 onClick = onHistoryClick,
+                text = "View history",
+                iconRes = R.drawable.ic_history,
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
-            ) {
-                Text("View history")
-            }
+            )
             Spacer(Modifier.height(4.dp))
         }
     }
@@ -130,6 +125,9 @@ private fun MapLibreView(location: LocationDto?) {
     val mapView = remember { MapView(context) }
     val mapRef = remember { mutableStateOf<MapLibreMap?>(null) }
     val lastAnimated = remember { mutableStateOf<LocationDto?>(null) }
+    // Marker in the theme primary color, read once here (the map callback
+    // runs outside composition, so the color value is captured, not read).
+    val markerColor = MaterialTheme.colorScheme.primary.toArgb()
 
     DisposableEffect(lifecycle, mapView) {
         var destroyed = false
@@ -173,7 +171,7 @@ private fun MapLibreView(location: LocationDto?) {
                         style.addLayer(
                             CircleLayer(MARKER_LAYER_ID, MARKER_SOURCE_ID).withProperties(
                                 PropertyFactory.circleRadius(8f),
-                                PropertyFactory.circleColor(android.graphics.Color.RED),
+                                PropertyFactory.circleColor(markerColor),
                                 PropertyFactory.circleStrokeWidth(2f),
                                 PropertyFactory.circleStrokeColor(android.graphics.Color.WHITE),
                             ),

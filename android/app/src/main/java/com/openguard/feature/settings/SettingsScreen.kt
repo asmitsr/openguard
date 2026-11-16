@@ -12,15 +12,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -30,11 +27,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.openguard.R
+import com.openguard.ui.ErrorText
+import com.openguard.ui.GuardOutlinedButton
+import com.openguard.ui.GuardTopBar
+import com.openguard.ui.SectionHeader
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
@@ -51,30 +53,28 @@ fun SettingsScreen(
     var deletePassword by remember { mutableStateOf("") }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Settings") },
-                navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
-            )
-        },
+        topBar = { GuardTopBar(title = "Settings", onBack = onBack) },
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp)
+                .padding(20.dp)
                 .verticalScroll(rememberScrollState()),
         ) {
-            Text("Account", style = MaterialTheme.typography.titleMedium)
+            SectionHeader(iconRes = R.drawable.ic_mail, title = "Account")
             Spacer(Modifier.height(8.dp))
             Text(userEmail ?: "Not signed in", style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.height(12.dp))
-            Button(onClick = viewModel::logout, enabled = !state.isBusy) {
-                Text("Log out")
-            }
+            GuardOutlinedButton(
+                onClick = viewModel::logout,
+                text = "Log out",
+                iconRes = R.drawable.ic_log_out,
+                enabled = !state.isBusy,
+            )
 
             Spacer(Modifier.height(24.dp))
-            Text("Privacy", style = MaterialTheme.typography.titleMedium)
+            SectionHeader(iconRes = R.drawable.ic_shield, title = "Privacy")
             Spacer(Modifier.height(8.dp))
             Text(
                 "OpenGuard records this phone's location only while tracking is " +
@@ -86,7 +86,7 @@ fun SettingsScreen(
             )
 
             Spacer(Modifier.height(24.dp))
-            Text("Battery", style = MaterialTheme.typography.titleMedium)
+            SectionHeader(iconRes = R.drawable.ic_battery, title = "Battery")
             Spacer(Modifier.height(8.dp))
             Text(
                 "If tracking stops in the background, Android's battery " +
@@ -95,39 +95,53 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodyMedium,
             )
             Spacer(Modifier.height(12.dp))
-            OutlinedButton(
+            GuardOutlinedButton(
                 onClick = {
                     context.startActivity(
                         Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
                     )
                 },
-            ) {
-                Text("Open battery optimization settings")
-            }
+                text = "Open battery optimization settings",
+            )
 
             Spacer(Modifier.height(24.dp))
-            Text(
-                "Danger zone",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.error,
+            SectionHeader(
+                iconRes = R.drawable.ic_triangle_alert,
+                title = "Danger zone",
+                tint = MaterialTheme.colorScheme.error,
+                containerColor = MaterialTheme.colorScheme.errorContainer,
             )
             Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = { showDeleteDialog = true }) {
-                Text("Delete my account")
-            }
+            GuardOutlinedButton(
+                onClick = { showDeleteDialog = true },
+                text = "Delete my account",
+                iconRes = R.drawable.ic_trash_2,
+                destructive = true,
+            )
             state.error?.let { error ->
                 Spacer(Modifier.height(8.dp))
-                Text(error, color = MaterialTheme.colorScheme.error)
+                ErrorText(error)
             }
 
             Spacer(Modifier.height(32.dp))
-            Text("OpenGuard 0.1.0 (MVP)", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "OpenGuard 0.1.0 (MVP)",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
+            icon = {
+                Icon(
+                    painterResource(R.drawable.ic_triangle_alert),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            },
             title = { Text("Delete account?") },
             text = {
                 Column {
@@ -137,9 +151,13 @@ fun SettingsScreen(
                         value = deletePassword,
                         onValueChange = { deletePassword = it },
                         label = { Text("Confirm with your password") },
+                        leadingIcon = {
+                            Icon(painterResource(R.drawable.ic_lock), contentDescription = null)
+                        },
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                         singleLine = true,
+                        shape = MaterialTheme.shapes.medium,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }

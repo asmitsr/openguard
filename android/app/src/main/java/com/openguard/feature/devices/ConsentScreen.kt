@@ -12,18 +12,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -33,14 +31,23 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.openguard.R
 import com.openguard.core.location.TrackingPermissions
+import com.openguard.ui.ErrorText
+import com.openguard.ui.GuardButton
+import com.openguard.ui.GuardCard
+import com.openguard.ui.GuardTopBar
+import com.openguard.ui.SectionHeader
+import com.openguard.ui.TintedIcon
 
 /**
  * VISIBLE consent screen. Nothing here is subtle: the user reads exactly
@@ -51,7 +58,6 @@ import com.openguard.core.location.TrackingPermissions
  * first, background location only afterwards in a separate step.
  * Requesting both at once makes the system ignore both.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ConsentScreen(
     viewModel: DeviceViewModel,
@@ -99,18 +105,13 @@ fun ConsentScreen(
     var deviceName by remember { mutableStateOf(android.os.Build.MODEL ?: "My phone") }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Add this phone") },
-                navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
-            )
-        },
+        topBar = { GuardTopBar(title = "Add this phone", onBack = onBack) },
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp)
+                .padding(20.dp)
                 .verticalScroll(rememberScrollState()),
         ) {
             Text("Before you start tracking", style = MaterialTheme.typography.headlineSmall)
@@ -135,11 +136,12 @@ fun ConsentScreen(
                 style = MaterialTheme.typography.bodyMedium,
             )
             Spacer(Modifier.height(24.dp))
-            Text("Permissions", style = MaterialTheme.typography.titleMedium)
+            SectionHeader(iconRes = R.drawable.ic_shield_check, title = "Permissions")
             Spacer(Modifier.height(12.dp))
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 PermissionStep(
+                    iconRes = R.drawable.ic_bell,
                     title = "1. Notifications",
                     description = "So the tracking notification can stay visible.",
                     granted = notificationsGranted,
@@ -157,6 +159,7 @@ fun ConsentScreen(
                 )
             }
             PermissionStep(
+                iconRes = R.drawable.ic_map_pin,
                 title = "2. Location while using the app",
                 description = "Precise location, so your position on the map is accurate.",
                 granted = fineGranted,
@@ -173,6 +176,7 @@ fun ConsentScreen(
                 onOpenSettings = { TrackingPermissions.openAppSettings(context) },
             )
             PermissionStep(
+                iconRes = R.drawable.ic_radar,
                 title = "3. Location all the time",
                 description = "Needed to keep recording when the app is closed. " +
                     "Tap Grant, then choose “Allow all the time” in Settings.",
@@ -196,25 +200,25 @@ fun ConsentScreen(
                 value = deviceName,
                 onValueChange = { deviceName = it },
                 label = { Text("Name for this phone") },
+                leadingIcon = {
+                    Icon(painterResource(R.drawable.ic_smartphone), contentDescription = null)
+                },
                 singleLine = true,
+                shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.fillMaxWidth(),
             )
             registerState.error?.let { error ->
                 Spacer(Modifier.height(8.dp))
-                Text(error, color = MaterialTheme.colorScheme.error)
+                ErrorText(error)
             }
             Spacer(Modifier.height(16.dp))
-            Button(
+            GuardButton(
                 onClick = { viewModel.registerThisDevice(deviceName) },
+                text = "I understand — register & start tracking",
                 enabled = allGranted && deviceName.isNotBlank() && !registerState.isLoading,
+                loading = registerState.isLoading,
                 modifier = Modifier.fillMaxWidth(),
-            ) {
-                if (registerState.isLoading) {
-                    CircularProgressIndicator()
-                } else {
-                    Text("I understand — register & start tracking")
-                }
-            }
+            )
             if (!allGranted) {
                 Spacer(Modifier.height(8.dp))
                 Text(
@@ -228,6 +232,7 @@ fun ConsentScreen(
 
 @Composable
 private fun PermissionStep(
+    iconRes: Int,
     title: String,
     description: String,
     granted: Boolean,
@@ -236,15 +241,42 @@ private fun PermissionStep(
     enabled: Boolean = true,
     permanentlyDenied: Boolean = false,
 ) {
-    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall)
-            Text(description, style = MaterialTheme.typography.bodySmall)
-        }
-        when {
-            granted -> Text("Granted", color = MaterialTheme.colorScheme.primary)
-            permanentlyDenied -> OutlinedButton(onClick = onOpenSettings) { Text("Settings") }
-            else -> Button(onClick = onGrant, enabled = enabled) { Text("Grant") }
+    GuardCard(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TintedIcon(iconRes)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            when {
+                granted -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        painterResource(R.drawable.ic_check),
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.tertiary,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text("Granted", color = MaterialTheme.colorScheme.tertiary)
+                }
+                permanentlyDenied -> OutlinedButton(
+                    onClick = onOpenSettings,
+                    shape = MaterialTheme.shapes.small,
+                ) { Text("Settings") }
+                else -> Button(
+                    onClick = onGrant,
+                    enabled = enabled,
+                    shape = MaterialTheme.shapes.small,
+                ) { Text("Grant") }
+            }
         }
     }
 }

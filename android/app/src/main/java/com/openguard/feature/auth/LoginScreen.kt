@@ -8,8 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -22,9 +21,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.openguard.R
+import com.openguard.ui.ErrorText
+import com.openguard.ui.GuardButton
+import com.openguard.ui.TintedIcon
 
 @Composable
 fun LoginScreen(
@@ -64,22 +68,29 @@ internal fun AuthForm(
     var localError by remember { mutableStateOf<String?>(null) }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier.fillMaxSize().padding(20.dp),
         verticalArrangement = Arrangement.Center,
     ) {
+        TintedIcon(R.drawable.ic_shield_check, size = 56.dp, iconSize = 28.dp)
+        Spacer(Modifier.height(16.dp))
         Text(title, style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(8.dp))
         Text(
             "OpenGuard tracks only your own phones, with your consent.",
             style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(24.dp))
         OutlinedTextField(
             value = email,
             onValueChange = { email = it; localError = null; onClearError() },
             label = { Text("Email") },
+            leadingIcon = {
+                Icon(painterResource(R.drawable.ic_mail), contentDescription = null)
+            },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
             singleLine = true,
+            shape = MaterialTheme.shapes.medium,
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(12.dp))
@@ -87,18 +98,22 @@ internal fun AuthForm(
             value = password,
             onValueChange = { password = it; localError = null; onClearError() },
             label = { Text("Password") },
+            leadingIcon = {
+                Icon(painterResource(R.drawable.ic_lock), contentDescription = null)
+            },
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             singleLine = true,
+            shape = MaterialTheme.shapes.medium,
             modifier = Modifier.fillMaxWidth(),
         )
         val error = localError ?: state.error
         if (error != null) {
             Spacer(Modifier.height(12.dp))
-            Text(error, color = MaterialTheme.colorScheme.error)
+            ErrorText(error)
         }
         Spacer(Modifier.height(24.dp))
-        Button(
+        GuardButton(
             onClick = {
                 when {
                     "@" !in email -> localError = "Enter a valid email address."
@@ -106,15 +121,11 @@ internal fun AuthForm(
                     else -> onSubmit(email.trim(), password)
                 }
             },
+            text = submitLabel,
             enabled = !state.isLoading,
+            loading = state.isLoading,
             modifier = Modifier.fillMaxWidth(),
-        ) {
-            if (state.isLoading) {
-                CircularProgressIndicator()
-            } else {
-                Text(submitLabel)
-            }
-        }
+        )
         Spacer(Modifier.height(8.dp))
         footer()
     }

@@ -8,29 +8,31 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.openguard.R
 import com.openguard.core.network.LocationDto
+import com.openguard.ui.ErrorText
+import com.openguard.ui.GuardButton
+import com.openguard.ui.GuardCard
+import com.openguard.ui.GuardTopBar
+import com.openguard.ui.TintedIcon
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(
     deviceId: String,
@@ -42,26 +44,21 @@ fun HistoryScreen(
     LaunchedEffect(deviceId) { viewModel.loadHistory(deviceId) }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("History — $deviceName") },
-                navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
-            )
-        },
+        topBar = { GuardTopBar(title = "History — $deviceName", onBack = onBack) },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
+        Column(Modifier.fillMaxSize().padding(padding).padding(20.dp)) {
             if (state.isLoading && state.locations.isEmpty()) {
                 CircularProgressIndicator()
             }
             state.error?.let { error ->
-                Text(error, color = MaterialTheme.colorScheme.error)
+                ErrorText(error)
             }
             if (!state.isLoading && state.locations.isEmpty() && state.error == null) {
                 Text("No locations recorded for this device yet.")
             }
             LazyColumn(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 items(state.locations, key = { it.id }) { location ->
                     LocationRow(location)
@@ -69,13 +66,13 @@ fun HistoryScreen(
             }
             if (state.nextBefore != null) {
                 Spacer(Modifier.height(12.dp))
-                Button(
+                GuardButton(
                     onClick = { viewModel.loadHistory(deviceId, loadMore = true) },
+                    text = "Load more",
                     enabled = !state.isLoading,
+                    loading = state.isLoading,
                     modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Load more")
-                }
+                )
             }
         }
     }
@@ -83,17 +80,34 @@ fun HistoryScreen(
 
 @Composable
 private fun LocationRow(location: LocationDto) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp)) {
-            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+    GuardCard(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TintedIcon(R.drawable.ic_map_pin, size = 36.dp, iconSize = 18.dp)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        "%.5f, %.5f".format(location.latitude, location.longitude),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text("±${location.accuracy.toInt()} m", style = MaterialTheme.typography.bodySmall)
+                }
                 Text(
-                    "%.5f, %.5f".format(location.latitude, location.longitude),
-                    style = MaterialTheme.typography.titleSmall,
+                    formatTime(location.recordedAt),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Text("±${location.accuracy.toInt()} m", style = MaterialTheme.typography.bodySmall)
+                location.provider?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
-            Text(formatTime(location.recordedAt), style = MaterialTheme.typography.bodySmall)
-            location.provider?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
     }
 }

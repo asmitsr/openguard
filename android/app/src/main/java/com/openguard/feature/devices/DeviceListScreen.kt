@@ -1,6 +1,5 @@
 package com.openguard.feature.devices
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,20 +8,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -30,12 +26,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import com.openguard.R
 import com.openguard.core.location.TrackingState
 import com.openguard.core.network.DeviceDto
+import com.openguard.ui.ErrorText
+import com.openguard.ui.GuardButton
+import com.openguard.ui.GuardCard
+import com.openguard.ui.GuardOutlinedButton
+import com.openguard.ui.GuardTopBar
+import com.openguard.ui.TintedIcon
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DeviceListScreen(
     viewModel: DeviceViewModel,
@@ -55,34 +59,52 @@ fun DeviceListScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("My devices") },
-                actions = { TextButton(onClick = onSettingsClick) { Text("Settings") } },
+            GuardTopBar(
+                title = "My devices",
+                actions = {
+                    IconButton(onClick = onSettingsClick) {
+                        Icon(
+                            painterResource(R.drawable.ic_settings),
+                            contentDescription = "Settings",
+                        )
+                    }
+                },
             )
         },
     ) { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
+            modifier = Modifier.fillMaxSize().padding(padding).padding(20.dp),
         ) {
             // Tracking control for THIS phone (only when it is registered).
             if (viewModel.thisDeviceId != null) {
-                Card(modifier = Modifier.fillMaxWidth()) {
+                GuardCard(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp)) {
-                        Text(
-                            if (isTracking) "Tracking is ON for this phone" else "Tracking is OFF",
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        Spacer(Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TintedIcon(R.drawable.ic_radar)
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                if (isTracking) "Tracking is ON for this phone" else "Tracking is OFF",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
                         Text(
                             "While tracking is on, a notification stays visible " +
                                 "and this phone's location is recorded.",
                             style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(12.dp))
                         if (isTracking) {
-                            OutlinedButton(onClick = onStopTracking) { Text("Stop tracking") }
+                            GuardOutlinedButton(
+                                onClick = onStopTracking,
+                                text = "Stop tracking",
+                            )
                         } else {
-                            Button(onClick = onStartTracking) { Text("Start tracking") }
+                            GuardButton(
+                                onClick = onStartTracking,
+                                text = "Start tracking",
+                            )
                         }
                     }
                 }
@@ -93,7 +115,7 @@ fun DeviceListScreen(
                 CircularProgressIndicator()
             }
             state.error?.let { error ->
-                Text(error, color = MaterialTheme.colorScheme.error)
+                ErrorText(error)
                 Spacer(Modifier.height(8.dp))
             }
             if (!state.isLoading && state.devices.isEmpty()) {
@@ -102,7 +124,7 @@ fun DeviceListScreen(
             }
             LazyColumn(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 items(state.devices, key = { it.id }) { device ->
                     DeviceRow(
@@ -114,15 +136,25 @@ fun DeviceListScreen(
                 }
             }
             Spacer(Modifier.height(12.dp))
-            Button(onClick = onAddDeviceClick, modifier = Modifier.fillMaxWidth()) {
-                Text("Add this phone")
-            }
+            GuardButton(
+                onClick = onAddDeviceClick,
+                text = "Add this phone",
+                iconRes = R.drawable.ic_plus,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 
     deviceToDelete?.let { device ->
         AlertDialog(
             onDismissRequest = { deviceToDelete = null },
+            icon = {
+                Icon(
+                    painterResource(R.drawable.ic_trash_2),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            },
             title = { Text("Remove device?") },
             text = { Text("“${device.name}” will be removed from your account.") },
             confirmButton = {
@@ -147,17 +179,23 @@ private fun DeviceRow(
     onClick: () -> Unit,
     onDeleteClick: () -> Unit,
 ) {
-    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)) {
+    GuardCard(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
+            TintedIcon(R.drawable.ic_smartphone)
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     device.name + if (isThisDevice) " (this phone)" else "",
                     style = MaterialTheme.typography.titleMedium,
                 )
-                Text(device.model ?: "Unknown model", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    device.model ?: "Unknown model",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Text(
                     when {
                         device.batteryLevel != null ->
@@ -166,13 +204,21 @@ private fun DeviceRow(
                         else -> "Battery unknown"
                     },
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
                     "Last seen: ${device.lastSeenAt ?: "never"}",
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            IconButton(onClick = onDeleteClick) { Text("✕") }
+            IconButton(onClick = onDeleteClick) {
+                Icon(
+                    painterResource(R.drawable.ic_trash_2),
+                    contentDescription = "Remove device",
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            }
         }
     }
 }
