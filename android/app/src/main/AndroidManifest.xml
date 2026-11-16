@@ -44,6 +44,12 @@
             android:showWhenLocked="true"
             android:turnScreenOn="true" />
 
+        <activity
+            android:name=".feature.security.EraseCountdownActivity"
+            android:exported="false"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true" />
+
         <service
             android:name=".core.location.LocationService"
             android:exported="false"

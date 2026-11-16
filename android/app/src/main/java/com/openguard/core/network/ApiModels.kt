@@ -1,6 +1,6 @@
 package com.openguard.core.network
 
-import com.google.gson.JsonObject
+import com.google.gson.JsonElement
 import com.google.gson.annotations.SerializedName
 
 // DTOs mirror the backend API contract exactly (see backend/src/routes).
@@ -123,9 +123,14 @@ data class CommandDto(
     @SerializedName("id") val id: String,
     @SerializedName("device_id") val deviceId: String? = null,
     @SerializedName("action") val action: String,
-    @SerializedName("payload") val payload: JsonObject? = null,
+    // JsonElement (not JsonObject): Gson throws on an explicit JSON null
+    // for a JsonObject-typed field even when the Kotlin type is nullable,
+    // and the server returns payload: null for ring/lock commands.
+    @SerializedName("payload") val payload: JsonElement? = null,
     @SerializedName("status") val status: String? = null,
     @SerializedName("nonce") val nonce: String? = null,
+    // Phase 3: the verify endpoint returns the truncated nonce instead.
+    @SerializedName("nonce_truncated") val nonceTruncated: String? = null,
     @SerializedName("issued_at") val issuedAt: String? = null,
     @SerializedName("expires_at") val expiresAt: String? = null,
     @SerializedName("acked_at") val ackedAt: String? = null,
@@ -136,6 +141,8 @@ data class CreateCommandRequest(
     @SerializedName("action") val action: String,
     @SerializedName("payload") val payload: Map<String, String>? = null,
     @SerializedName("idempotency_key") val idempotencyKey: String? = null,
+    // Phase 3: required for the erase action (single-use step-up token).
+    @SerializedName("step_up_token") val stepUpToken: String? = null,
 )
 
 data class CommandsResponse(
@@ -155,7 +162,8 @@ data class AckCommandRequest(
 /** One event in the device -> server upload batch. */
 data class SecurityEventRequest(
     @SerializedName("event_type") val eventType: String,
-    @SerializedName("details") val details: JsonObject? = null,
+    // JsonElement, not JsonObject: same explicit-null parse crash as payload.
+    @SerializedName("details") val details: JsonElement? = null,
     @SerializedName("confirmed") val confirmed: Boolean = false,
     @SerializedName("created_at") val createdAt: String? = null,
 )
@@ -171,11 +179,58 @@ data class SecurityEventsUploadResponse(
 data class SecurityEventDto(
     @SerializedName("id") val id: String,
     @SerializedName("event_type") val eventType: String,
-    @SerializedName("details") val details: JsonObject? = null,
+    // JsonElement, not JsonObject: same explicit-null parse crash as payload.
+    @SerializedName("details") val details: JsonElement? = null,
     @SerializedName("confirmed") val confirmed: Boolean = false,
     @SerializedName("created_at") val createdAt: String? = null,
 )
 
 data class SecurityEventsResponse(
     @SerializedName("events") val events: List<SecurityEventDto>,
+)
+
+// ---- Phase 3: step-up auth, recovery codes, command verify ----
+
+data class StepUpRequest(
+    @SerializedName("derived_key") val derivedKey: String,
+)
+
+data class StepUpResponse(
+    @SerializedName("step_up_token") val stepUpToken: String,
+    @SerializedName("expires_in") val expiresIn: Int,
+)
+
+data class StepUpTokenRequest(
+    @SerializedName("step_up_token") val stepUpToken: String,
+)
+
+data class RecoveryCodesResponse(
+    @SerializedName("codes") val codes: List<String>,
+)
+
+data class RecoveryCodesStatusResponse(
+    @SerializedName("remaining") val remaining: Int,
+)
+
+data class RecoverRequest(
+    @SerializedName("email") val email: String,
+    @SerializedName("code") val code: String,
+    @SerializedName("salt") val salt: String,
+    @SerializedName("derived_key") val derivedKey: String,
+)
+
+data class RevokeOthersResponse(
+    @SerializedName("revoked") val revoked: Int,
+)
+
+data class AuditDto(
+    @SerializedName("id") val id: String,
+    @SerializedName("event") val event: String,
+    @SerializedName("created_at") val createdAt: String?,
+    @SerializedName("detail") val detail: String?,
+)
+
+data class CommandVerifyResponse(
+    @SerializedName("command") val command: CommandDto,
+    @SerializedName("audit") val audit: List<AuditDto>,
 )

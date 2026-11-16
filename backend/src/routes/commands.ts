@@ -1,13 +1,13 @@
 import { Hono } from 'hono'
 import { db, type Env } from '../lib/db'
-import { authenticateDevice, authenticateUser, newToken, ownsDevice } from '../lib/auth'
+import { authenticateDevice, authenticateUser, newToken, ownsDevice, verifyStepUpToken } from '../lib/auth'
 import { audit } from '../lib/audit'
 import { clampLimit, err, jsonBody } from '../lib/http'
 import { rateLimited } from '../lib/ratelimit'
 
 const app = new Hono<{ Bindings: Env }>()
 
-const ACTIONS = ['ring', 'lock', 'lost_mode_on', 'lost_mode_off'] as const
+const ACTIONS = ['ring', 'lock', 'lost_mode_on', 'lost_mode_off', 'erase'] as const
 type Action = (typeof ACTIONS)[number]
 
 const EVENT_TYPES = [
@@ -58,6 +58,7 @@ app.post('/devices/:id/commands', async (c) => {
     action?: unknown
     payload?: unknown
     idempotency_key?: unknown
+    step_up_token?: unknown
   }>(c)
   const action = body?.action
   const payload = body?.payload as Record<string, unknown> | null | undefined
@@ -75,7 +76,7 @@ app.post('/devices/:id/commands', async (c) => {
     return err(
       c,
       400,
-      'action must be ring, lock, lost_mode_on or lost_mode_off; payload.message max 200 chars; idempotency_key max 100 chars',
+      'action must be ring, lock, lost_mode_on, lost_mode_off or erase; payload.message max 200 chars; idempotency_key max 100 chars',
     )
   }
   const sql = db(c.env)
@@ -89,13 +90,36 @@ app.post('/devices/:id/commands', async (c) => {
       })
     }
   }
+  // Erase guards, checked in order: (a) single-use step-up token,
+  // (b) hard limit 1/hour/user, (c) device must be online (seen < 5 min ago).
+  // An erase must never sit queued for a phone that may never come back.
+  if (action === 'erase') {
+    const stepUpToken = body?.step_up_token
+    if (
+      typeof stepUpToken !== 'string' ||
+      !(await verifyStepUpToken(c.env, auth.user.id, stepUpToken))
+    ) {
+      return err(c, 403, 'erase requires step-up authentication')
+    }
+    if (rateLimited(`erase:${auth.user.id}`, 1, 3600_000)) return err(c, 429, 'too many requests')
+    const dev = await sql`SELECT last_seen_at FROM devices WHERE id = ${deviceId}`
+    const lastSeen = (dev[0] as { last_seen_at: string | null } | undefined)?.last_seen_at
+    if (!lastSeen || Date.now() - new Date(lastSeen).getTime() > 5 * 60 * 1000) {
+      return err(c, 409, 'device is offline — erase requires the device to be online')
+    }
+  }
   // The message only applies to lost_mode_on; other actions carry no payload.
   const storedPayload =
     action === 'lost_mode_on' && typeof message === 'string' ? { message } : null
+  // Erase expires in 5 minutes; other commands queue for 24 hours so an
+  // offline phone doesn't lose them.
+  const expiresAt = new Date(
+    Date.now() + (action === 'erase' ? 5 * 60 * 1000 : 24 * 60 * 60 * 1000),
+  ).toISOString()
   const rows = await sql`
     INSERT INTO commands (device_id, action, payload, nonce, idempotency_key, expires_at)
     VALUES (${deviceId}, ${action}, ${storedPayload ? JSON.stringify(storedPayload) : null}::jsonb,
-            ${newToken()}, ${idempotencyKey ?? null}, now() + interval '5 minutes')
+            ${newToken()}, ${idempotencyKey ?? null}, ${expiresAt})
     RETURNING id, device_id, action, payload, status, nonce, issued_at, expires_at`
   const cmd = rows[0] as unknown as CommandRow
   if (action === 'lost_mode_on') {
@@ -121,6 +145,41 @@ app.get('/devices/:id/commands', async (c) => {
     SELECT id, action, payload, status, issued_at, expires_at, acked_at, result
     FROM commands WHERE device_id = ${deviceId} ORDER BY issued_at DESC LIMIT ${limit}`
   return c.json({ commands: rows })
+})
+
+// GET /commands/:id — one command with its audit timeline (oldest first).
+// The nonce is truncated: the full nonce is the device's replay token.
+app.get('/commands/:id', async (c) => {
+  const auth = await authenticateUser(c)
+  if (!auth) return err(c, 401, 'unauthorized')
+  const commandId = c.req.param('id')
+  const sql = db(c.env)
+  const rows = await sql`
+    SELECT c.id, c.device_id, c.action, c.payload, c.status, c.nonce,
+           c.issued_at, c.expires_at, c.acked_at, c.result
+    FROM commands c JOIN devices d ON d.id = c.device_id
+    WHERE c.id = ${commandId} AND d.user_id = ${auth.user.id}`
+  const row = rows[0] as unknown as CommandRow & { acked_at: string | null; result: string | null }
+  if (!row) return err(c, 404, 'command not found')
+  const auditRows = await sql`
+    SELECT id, event, created_at, detail::text AS detail FROM audit_events
+    WHERE user_id = ${auth.user.id} AND detail->>'command_id' = ${commandId}
+    ORDER BY created_at ASC`
+  return c.json({
+    command: {
+      id: row.id,
+      device_id: row.device_id,
+      action: row.action,
+      payload: row.payload,
+      status: row.status,
+      nonce_truncated: row.nonce.slice(0, 8) + '…',
+      issued_at: row.issued_at,
+      expires_at: row.expires_at,
+      acked_at: row.acked_at,
+      result: row.result,
+    },
+    audit: auditRows,
+  })
 })
 
 // GET /devices/:id/commands/pending — the device polls for its pending commands.
@@ -173,6 +232,7 @@ app.post('/commands/:id/ack', async (c) => {
   await audit(c.env, device.user_id, 'command_ack', device.id, {
     action: rows[0].action as string,
     status,
+    command_id: commandId,
   })
   return c.body(null, 204)
 })

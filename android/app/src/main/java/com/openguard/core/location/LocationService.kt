@@ -11,6 +11,9 @@ import android.content.pm.ServiceInfo
 import android.location.Location
 import android.os.IBinder
 import android.os.Looper
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkRequest
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -60,6 +63,19 @@ class LocationService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var fused: FusedLocationProviderClient
     private lateinit var database: AppDatabase
+    private var connectivityManager: ConnectivityManager? = null
+
+    // Connectivity-triggered command fetch: when the network comes back,
+    // poll for pending commands right away instead of waiting up to 15
+    // minutes for the periodic worker. Only active while tracking runs —
+    // this service (and the callback) stops when tracking stops. No
+    // manifest CONNECTIVITY_ACTION receiver: it no longer fires on
+    // Android 7+.
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            UploadWorker.enqueueOneTime(applicationContext)
+        }
+    }
 
     private val locationCallback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
@@ -78,6 +94,11 @@ class LocationService : Service() {
         val app = application as OpenGuardApp
         fused = LocationServices.getFusedLocationProviderClient(this)
         database = app.database
+        connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        connectivityManager?.registerNetworkCallback(
+            NetworkRequest.Builder().build(),
+            networkCallback,
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -94,6 +115,12 @@ class LocationService : Service() {
 
     override fun onDestroy() {
         fused.removeLocationUpdates(locationCallback)
+        try {
+            connectivityManager?.unregisterNetworkCallback(networkCallback)
+        } catch (e: IllegalArgumentException) {
+            // Callback was never registered; nothing to unregister.
+        }
+        connectivityManager = null
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         TrackingState.set(false)
         scope.cancel()

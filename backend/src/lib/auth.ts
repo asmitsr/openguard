@@ -74,6 +74,17 @@ export async function sha256Hex(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
+// Validates a step-up token: it must belong to the user and not be
+// expired. Single-use: the DELETE consumes the row atomically, so a
+// replayed token finds nothing. Used by recovery-code generation and erase.
+export async function verifyStepUpToken(env: Env, userId: string, token: string): Promise<boolean> {
+  const rows = await db(env)`
+    DELETE FROM step_up_tokens
+    WHERE user_id = ${userId} AND token_hash = ${await sha256Hex(token)} AND expires_at > now()
+    RETURNING id`
+  return rows.length > 0
+}
+
 export type UserRow = { id: string; email: string }
 export type DeviceRow = {
   id: string

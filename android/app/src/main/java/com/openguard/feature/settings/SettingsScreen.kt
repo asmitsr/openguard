@@ -53,16 +53,21 @@ fun SettingsScreen(
     userEmail: String?,
     onBack: () -> Unit,
     onLoggedOut: () -> Unit,
+    onRecoveryClick: () -> Unit,
+    onDeviceSignedOut: () -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     val activity = context as? Activity
     val lifecycleOwner = LocalLifecycleOwner.current
-    LaunchedEffect(state.loggedOut, state.accountDeleted) {
+    LaunchedEffect(state.loggedOut, state.accountDeleted, state.deviceSignedOut) {
         if (state.loggedOut || state.accountDeleted) onLoggedOut()
+        if (state.deviceSignedOut) onDeviceSignedOut()
     }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var deletePassword by remember { mutableStateOf("") }
+    var showRevokeDialog by remember { mutableStateOf(false) }
+    var showSignOutDeviceDialog by remember { mutableStateOf(false) }
 
     // Bump on every resume so admin/SIM state changed in system Settings
     // is picked up when the user comes back.
@@ -98,6 +103,33 @@ fun SettingsScreen(
                 iconRes = R.drawable.ic_log_out,
                 enabled = !state.isBusy,
             )
+            Spacer(Modifier.height(12.dp))
+            GuardOutlinedButton(
+                onClick = onRecoveryClick,
+                text = "Recovery codes",
+                iconRes = R.drawable.ic_shield_check,
+                enabled = !state.isBusy,
+            )
+            Spacer(Modifier.height(12.dp))
+            GuardOutlinedButton(
+                onClick = { showRevokeDialog = true },
+                text = "Sign out all other sessions",
+                iconRes = R.drawable.ic_log_out,
+                enabled = !state.isBusy,
+            )
+            if (viewModel.thisDeviceId != null) {
+                Spacer(Modifier.height(12.dp))
+                GuardOutlinedButton(
+                    onClick = { showSignOutDeviceDialog = true },
+                    text = "Sign out this phone",
+                    iconRes = R.drawable.ic_log_out,
+                    enabled = !state.isBusy,
+                )
+            }
+            state.info?.let { info ->
+                Spacer(Modifier.height(8.dp))
+                Text(info, style = MaterialTheme.typography.bodyMedium)
+            }
 
             Spacer(Modifier.height(24.dp))
             SectionHeader(iconRes = R.drawable.ic_shield, title = "Privacy")
@@ -136,11 +168,13 @@ fun SettingsScreen(
             Text(
                 if (adminActive) {
                     "Device admin is active — Lock and Lost Mode can lock " +
-                        "this phone. OpenGuard never sets or changes your password."
+                        "this phone, and remote erase can wipe it. " +
+                        "OpenGuard never sets or changes your password."
                 } else {
-                    "Device admin is not enabled. Lock and Lost Mode locking " +
-                        "need it — without it, Lost Mode still shows on screen " +
-                        "but the phone is not locked."
+                    "Device admin is not enabled. Lock, Lost Mode locking " +
+                        "and remote erase need it — without it, Lost Mode " +
+                        "still shows on screen but the phone is not locked, " +
+                        "and erase is refused."
                 },
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -249,6 +283,56 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showDeleteDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (showRevokeDialog) {
+        AlertDialog(
+            onDismissRequest = { showRevokeDialog = false },
+            title = { Text("Sign out all other sessions?") },
+            text = {
+                Text(
+                    "Every other signed-in session will be signed out. " +
+                        "This phone stays signed in.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showRevokeDialog = false
+                        viewModel.revokeOtherSessions()
+                    },
+                ) { Text("Sign out others") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRevokeDialog = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (showSignOutDeviceDialog) {
+        AlertDialog(
+            onDismissRequest = { showSignOutDeviceDialog = false },
+            title = { Text("Sign out this phone?") },
+            text = {
+                Text(
+                    "This phone's device token is invalidated and tracking " +
+                        "stops. The phone must be added again before it can " +
+                        "be tracked or receive commands. Your account stays " +
+                        "signed in.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showSignOutDeviceDialog = false
+                        viewModel.signOutThisDevice()
+                    },
+                ) { Text("Sign out", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSignOutDeviceDialog = false }) { Text("Cancel") }
             },
         )
     }

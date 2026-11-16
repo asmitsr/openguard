@@ -35,6 +35,7 @@ fun LoginScreen(
     viewModel: AuthViewModel,
     onLoginSuccess: () -> Unit,
     onRegisterClick: () -> Unit,
+    onRecoverClick: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsState()
     LaunchedEffect(state.isLoggedIn) {
@@ -47,8 +48,13 @@ fun LoginScreen(
         onSubmit = viewModel::login,
         onClearError = viewModel::clearError,
     ) {
-        TextButton(onClick = onRegisterClick) {
-            Text("No account yet? Register")
+        Column {
+            TextButton(onClick = onRegisterClick) {
+                Text("No account yet? Register")
+            }
+            TextButton(onClick = onRecoverClick) {
+                Text("Forgot password? Use a recovery code")
+            }
         }
     }
 }

@@ -3,6 +3,7 @@ package com.openguard.feature.security
 import com.openguard.core.common.Result
 import com.openguard.core.network.ApiService
 import com.openguard.core.network.CommandDto
+import com.openguard.core.network.CommandVerifyResponse
 import com.openguard.core.network.CreateCommandRequest
 import com.openguard.core.network.SecurityEventDto
 import com.openguard.core.network.apiCall
@@ -19,6 +20,7 @@ class CommandRepository(private val api: ApiService) {
         deviceId: String,
         action: String,
         message: String? = null,
+        stepUpToken: String? = null,
     ): Result<CommandDto> = apiCall {
         api.createCommand(
             deviceId,
@@ -26,9 +28,14 @@ class CommandRepository(private val api: ApiService) {
                 action = action,
                 payload = message?.takeIf { it.isNotBlank() }?.let { mapOf("message" to it) },
                 idempotencyKey = UUID.randomUUID().toString(),
+                stepUpToken = stepUpToken,
             ),
         )
     }
+
+    /** One command plus its audit timeline, for the verify dialog. */
+    suspend fun verifyCommand(commandId: String): Result<CommandVerifyResponse> =
+        apiCall { api.verifyCommand(commandId) }
 
     suspend fun listCommands(deviceId: String, limit: Int = 20): Result<List<CommandDto>> =
         when (val result = apiCall { api.listCommands(deviceId, limit) }) {

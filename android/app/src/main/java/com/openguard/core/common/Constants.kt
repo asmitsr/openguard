@@ -64,4 +64,14 @@ object SecurityConfig {
     const val LOST_MODE_NOTIFICATION_ID = 3
     const val SECURITY_CHANNEL_ID = "openguard-security"
     const val SIM_NOTIFICATION_ID = 4
+
+    // ---- Phase 3: remote erase ----
+    const val ERASE_CHANNEL_ID = "openguard-erase"
+    const val ERASE_NOTIFICATION_ID = 5
+
+    /** Grace period between an erase command and the wipe (abort window). */
+    const val ERASE_GRACE_MS = 60_000L
+
+    /** Unique name of the one-time backstop worker that wipes if the countdown activity died. */
+    const val ERASE_WORK_NAME = "openguard-erase-backstop"
 }

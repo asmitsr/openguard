@@ -51,6 +51,20 @@ class DeviceRepository(
             is Result.Error -> result
         }
 
+    /**
+     * Signs a device out: the server rotates its device token (and revokes
+     * other user sessions). If it is this phone, the local device record
+     * is cleared too — tracking must be stopped by the caller.
+     */
+    suspend fun signOutDevice(id: String): Result<Unit> =
+        when (val result = apiUnitCall { api.signOutDevice(id) }) {
+            is Result.Success -> {
+                if (tokenStore.deviceId == id) tokenStore.clearDevice()
+                Result.Success(Unit)
+            }
+            is Result.Error -> result
+        }
+
     suspend fun latestLocation(deviceId: String): Result<LocationDto?> =
         apiCallNullable { api.latestLocation(deviceId) }
 

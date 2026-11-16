@@ -120,4 +120,34 @@ interface ApiService {
 
     @DELETE("api/v1/auth/account")
     suspend fun deleteAccount(@Body request: DeleteAccountRequest): Response<Unit>
+
+    // ---- Phase 3: step-up auth, recovery codes, erase verify, sign-out ----
+
+    /** User token. Returns a single-use step-up token (10 minutes). */
+    @POST("api/v1/auth/step-up")
+    suspend fun stepUp(@Body request: StepUpRequest): Response<StepUpResponse>
+
+    /** User token. Revokes all other sessions for this user. */
+    @POST("api/v1/auth/sessions/revoke-others")
+    suspend fun revokeOtherSessions(): Response<RevokeOthersResponse>
+
+    /** User token + step-up token. Codes are shown once. */
+    @POST("api/v1/auth/recovery-codes/generate")
+    suspend fun generateRecoveryCodes(@Body request: StepUpTokenRequest): Response<RecoveryCodesResponse>
+
+    /** User token. */
+    @GET("api/v1/auth/recovery-codes")
+    suspend fun recoveryCodesStatus(): Response<RecoveryCodesStatusResponse>
+
+    /** NO auth. Resets the password with a recovery code. 204. */
+    @POST("api/v1/auth/recover")
+    suspend fun recover(@Body request: RecoverRequest): Response<Unit>
+
+    /** User token. The command plus its audit timeline. */
+    @GET("api/v1/commands/{id}")
+    suspend fun verifyCommand(@Path("id") id: String): Response<CommandVerifyResponse>
+
+    /** User token. Rotates the device token; also revokes other sessions. 204. */
+    @POST("api/v1/devices/{id}/sign-out")
+    suspend fun signOutDevice(@Path("id") id: String): Response<Unit>
 }

@@ -10,6 +10,7 @@ import {
   newToken,
   sha256Hex,
   verifyDerivedKey,
+  verifyStepUpToken,
 } from '../lib/auth'
 import { audit } from '../lib/audit'
 import { err, jsonBody } from '../lib/http'
@@ -210,6 +211,125 @@ app.delete('/account', async (c) => {
   // Cascades delete sessions, devices, locations and audit rows.
   // (No 'account_delete' audit row can survive: it would cascade with the user.)
   await db(c.env)`DELETE FROM users WHERE id = ${auth.user.id}`
+  return c.body(null, 204)
+})
+
+// Step-up: re-verifies the password (via the client-derived key, same as
+// DELETE /account) and returns a single-use 10-minute token that unlocks
+// recovery-code generation and remote erase.
+app.post('/step-up', async (c) => {
+  if (authLimited(c)) return err(c, 429, 'too many requests')
+  const auth = await authenticateUser(c)
+  if (!auth) return err(c, 401, 'unauthorized')
+  const body = await jsonBody<{ derived_key?: unknown }>(c)
+  const derivedKey = body?.derived_key
+  if (typeof derivedKey !== 'string') return err(c, 400, 'derived_key required')
+  const rows = await db(c.env)`SELECT password_hash FROM users WHERE id = ${auth.user.id}`
+  const user = rows[0] as { password_hash: string } | undefined
+  if (!user || !(await verifyDerivedKey(derivedKey, user.password_hash))) {
+    return err(c, 403, 'incorrect password')
+  }
+  const token = newToken()
+  await db(c.env)`
+    INSERT INTO step_up_tokens (user_id, token_hash, expires_at)
+    VALUES (${auth.user.id}, ${await sha256Hex(token)}, now() + interval '10 minutes')`
+  await audit(c.env, auth.user.id, 'step_up')
+  return c.json({ step_up_token: token, expires_in: 600 }, 200, { 'Cache-Control': 'no-store' })
+})
+
+app.post('/sessions/revoke-others', async (c) => {
+  const auth = await authenticateUser(c)
+  if (!auth) return err(c, 401, 'unauthorized')
+  const rows = await db(c.env)`
+    DELETE FROM sessions WHERE user_id = ${auth.user.id} AND id != ${auth.sessionId} RETURNING id`
+  await audit(c.env, auth.user.id, 'sessions_revoke_others', null, { revoked: rows.length })
+  return c.json({ revoked: rows.length })
+})
+
+// Recovery codes: 12 chars from a 32-char alphabet with no confusables
+// (no 0/O, 1/I/L), formatted XXXX-XXXX-XXXX. Only SHA-256 hashes are stored;
+// the codes themselves are returned once, at generation.
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+
+function newRecoveryCode(): string {
+  // 256 % 32 == 0, so byte % 32 is unbiased.
+  const bytes = crypto.getRandomValues(new Uint8Array(12))
+  const raw = [...bytes].map((b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('')
+  return `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8)}`
+}
+
+function normalizeRecoveryCode(code: string): string {
+  return code.toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+app.post('/recovery-codes/generate', async (c) => {
+  const auth = await authenticateUser(c)
+  if (!auth) return err(c, 401, 'unauthorized')
+  const body = await jsonBody<{ step_up_token?: unknown }>(c)
+  const stepUpToken = body?.step_up_token
+  if (typeof stepUpToken !== 'string' || !(await verifyStepUpToken(c.env, auth.user.id, stepUpToken))) {
+    return err(c, 403, 'step-up authentication required')
+  }
+  const codes = Array.from({ length: 10 }, newRecoveryCode)
+  const hashes = await Promise.all(codes.map((code) => sha256Hex(normalizeRecoveryCode(code))))
+  const sql = db(c.env)
+  // Regenerating invalidates the old codes.
+  await sql`DELETE FROM recovery_codes WHERE user_id = ${auth.user.id}`
+  const params: unknown[] = []
+  const tuples = hashes.map((h, i) => {
+    params.push(auth.user.id, h)
+    return `($${i * 2 + 1}, $${i * 2 + 2})`
+  })
+  await sql(`INSERT INTO recovery_codes (user_id, code_hash) VALUES ${tuples.join(',')}`, params)
+  await audit(c.env, auth.user.id, 'recovery_codes_generate')
+  return c.json({ codes }, 200, { 'Cache-Control': 'no-store' })
+})
+
+app.get('/recovery-codes', async (c) => {
+  const auth = await authenticateUser(c)
+  if (!auth) return err(c, 401, 'unauthorized')
+  const rows = await db(c.env)`
+    SELECT COUNT(*)::int AS n FROM recovery_codes
+    WHERE user_id = ${auth.user.id} AND used = false`
+  return c.json({ remaining: (rows[0] as { n: number }).n })
+})
+
+// Password recovery with a recovery code. No auth: the user lost their
+// password. The code is claimed atomically (used=false -> used=true), so a
+// code works exactly once. Unknown email and bad code give the same 401.
+app.post('/recover', async (c) => {
+  if (authLimited(c)) return err(c, 429, 'too many requests')
+  const body = await jsonBody<{
+    email?: unknown
+    code?: unknown
+    salt?: unknown
+    derived_key?: unknown
+  }>(c)
+  const { email, code, salt, derived_key: derivedKey } = body ?? {}
+  if (!validEmail(email) || typeof code !== 'string' || !validSalt(salt) || !validDerivedKey(derivedKey)) {
+    return err(
+      c,
+      400,
+      'valid email, recovery code, salt (32 hex chars) and derived_key (64 hex chars) required',
+    )
+  }
+  const passwordHash = await hashDerivedKey(derivedKey)
+  if (!passwordHash) return err(c, 400, 'invalid derived_key')
+  const sql = db(c.env)
+  const users = await sql`SELECT id FROM users WHERE email = ${email}`
+  const user = users[0] as { id: string } | undefined
+  const claimed = user
+    ? await sql`
+        UPDATE recovery_codes SET used = true, used_at = now()
+        WHERE user_id = ${user.id}
+          AND code_hash = ${await sha256Hex(normalizeRecoveryCode(code))}
+          AND used = false
+        RETURNING id`
+    : []
+  if (!user || !claimed.length) return err(c, 401, 'invalid email or recovery code')
+  await sql`UPDATE users SET password_hash = ${passwordHash}, salt = ${salt} WHERE id = ${user.id}`
+  await sql`DELETE FROM sessions WHERE user_id = ${user.id}`
+  await audit(c.env, user.id, 'password_recover')
   return c.body(null, 204)
 })
 

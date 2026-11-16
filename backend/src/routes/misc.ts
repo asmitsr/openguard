@@ -36,6 +36,7 @@ app.get('/privacy', async (c) => {
       'location history (latitude, longitude, accuracy, timestamp, provider)',
       'battery level, charging state and network type',
       'remote command history and security event log',
+      'recovery codes (stored as hashes only)',
       'session metadata (user agent, IP address)',
       'audit log of account and device actions',
     ],

@@ -4,6 +4,227 @@ Built 16 Nov 2026. Backend + dashboard verified (typecheck green, local
 `wrangler dev` smoke test passed, docs audit passed). Android written but
 never compiled (no SDK/Java on this VM) — first real build is GitHub Actions.
 
+## Phase 3 Remote Recovery (built 16 Nov 2026, not yet deployed)
+
+Remote data erase (with step-up auth + on-device abort), remote sign-out,
+recovery codes, offline command queue (24h), command verification, plus an
+urgent fix for the Gson null-payload crash that broke Phase 2 ring/lock.
+
+### Deploy steps (parent) — in this order
+
+1. **Apply the migration to Neon.** Paste `db/migrations/003_recovery.sql`
+   into the Neon SQL Editor and run it (idempotent: `IF NOT EXISTS` +
+   a DO block). Adds `recovery_codes` + `step_up_tokens` tables and extends
+   the `commands` action CHECK to include `'erase'` (replaces the
+   auto-named `commands_action_check` with `commands_action_check_v2`).
+   Do NOT re-apply `db/schema.sql` or `002_commands.sql` — v1 + v2 live.
+2. **Deploy the Worker** (backend changed: step-up, recovery, revoke,
+   sign-out, erase, verify endpoints; dashboard additions).
+3. **Push to GitHub** — CI builds the Android APK as before.
+
+### URGENT FIX folded in: Gson null-payload crash (Phase 2 bug)
+
+The user tested the Phase 2 APK: ring/lock/Lost Mode did nothing, and the
+Command Center showed "Expected a com.google.gson.JsonObject but was
+com.google.gson.JsonNull; at path $.payload". Root cause: the server
+correctly returns `payload: null` for ring/lock (only lost_mode_on carries
+a payload), but Gson THROWS when deserializing an explicit JSON null into
+a `JsonObject`-typed field even when the Kotlin type is nullable — so
+every create-command response, history list, and worker poll for a
+ring/lock command crashed, the one-time worker was never enqueued, and
+the command expired unexecuted. Fix: `CommandDto.payload`,
+`SecurityEventRequest.details` and `SecurityEventDto.details` changed
+from `JsonObject?` to `JsonElement?` (Gson's JsonElement adapter tolerates
+null); the only payload reader (CommandExecutor, lost_mode_on message)
+now null-checks AND JsonNull-checks (`takeIf { it.isJsonObject }` before
+`.get`); CommandCenterViewModel maps parser-exception text to one friendly
+line ("Could not read the server response — please try again") instead of
+showing the raw Gson error. Server contract unchanged (`payload: null`
+stays null). This fix is what makes Phase 2's ring/lock actually work.
+
+### Erase safety chain (read before testing erase)
+
+Erase is the only destructive command, so it has six gates — no single
+mistake can wipe a phone:
+1. **Step-up auth**: creating an erase requires a fresh single-use 10-min
+   step-up token from `POST /auth/step-up` (password re-verified via the
+   client-derived key, same as account deletion).
+2. **Type-to-confirm**: dashboard + app both require typing exactly `ERASE`
+   on a warning screen that lists what is wiped.
+3. **Rate limit**: 1 erase/hour/user (in-memory, per-isolate — same caveat
+   as all existing limits).
+4. **Online-only**: the server refuses erase for a device not seen in the
+   last 5 minutes (409) — an erase must never sit queued for a phone that
+   may never come back. Non-erase commands queue for 24h instead.
+5. **Device admin required**: the device acks `failed` ("Device admin is
+   not enabled — erase needs it") when admin is inactive.
+6. **60-second on-device grace delay**: the phone shows a loud, visible
+   countdown over the lock screen (`EraseCountdownActivity`); the owner
+   aborts by confirming the device credential (PIN/pattern/biometrics),
+   which clears the state and acks the command as failed ("Erase aborted
+   by owner"). Only at zero does `DevicePolicyManager.wipeData(
+   WIPE_EXTERNAL_STORAGE)` run. A WorkManager backstop (60s delay) wipes
+   if the activity/process died mid-countdown; the countdown is recomputed
+   from a stored absolute deadline, so rotation or process death cannot
+   stretch it.
+
+Honest limits: wipeData needs device admin — without it erase cannot run
+(the UI says so plainly). Factory Reset Protection is deliberately NOT
+cleared (no `WIPE_RESET_PROTECTION_DATA`): a wiped stolen phone stays
+locked to the owner's Google account. If the phone has NO screen lock,
+there is no credential confirm, so abort is unavailable from that screen
+(the 60s delay + visible screen + the other five gates remain). The
+WorkManager backstop delay is a minimum, never exact — under Doze it can
+fire late, but the activity is the primary path. An erase command acked
+as "countdown started" and then aborted shows status `failed` with the
+abort result (the ack endpoint updates the row).
+
+### What was built
+
+- **Backend** (no new dependencies):
+  - `POST /auth/step-up` — re-verifies the derived key, returns a
+    single-use 10-min token (hash stored in `step_up_tokens`, `no-store`,
+    auth limiter, audit `step_up`). Shared `verifyStepUpToken` helper in
+    `lib/auth.ts` (atomic DELETE … RETURNING, so a token works once).
+  - `POST /auth/recovery-codes/generate` — step-up token required;
+    generates 10 codes (`XXXX-XXXX-XXXX`, 32-char alphabet, no
+    confusables), deletes old codes first, stores only SHA-256 hashes,
+    returns `{codes}` once (`no-store`, audit `recovery_codes_generate`).
+  - `GET /auth/recovery-codes` — returns only `{remaining}`.
+  - `POST /auth/recover` — no auth; atomically claims one unused code
+    (UPDATE … WHERE used=false RETURNING), then sets the new password
+    (client-side KDF salt + derived key, same as register), deletes all
+    sessions, audit `password_recover`, 204. Unknown email and bad code
+    both give 401 `invalid email or recovery code` (no enumeration).
+  - `POST /auth/sessions/revoke-others` — deletes all sessions except the
+    current one, returns `{revoked}`, audit `sessions_revoke_others`.
+  - `POST /devices/:id/sign-out` — rotates the device token to a hash of
+    a discarded random token (device is signed out; re-pair = unlink +
+    re-add), deletes the user's other sessions, audit `device_sign_out`,
+    204. Device row + history survive.
+  - `POST /devices/:id/commands` — new `erase` action with the guards
+    above (step-up, 1/hour, online-only, 5-min expiry); all non-erase
+    actions now expire in 24h (was 5 min). Idempotency lookup runs before
+    the erase guards, so replaying a key doesn't burn a step-up token.
+  - `GET /commands/:id` — one command + its audit timeline (oldest first);
+    nonce returned truncated (first 8 chars + …). The `command_ack` audit
+    detail now includes `command_id` so the timeline is complete.
+  - Privacy `server_data` lists recovery codes (hashes only).
+- **Dashboard** (`backend/public/index.html`): online/offline indicator
+  per device (online = seen < 5 min) + 24h-queue note; Erase button
+  (danger, disabled offline) with inline warning + type-ERASE + password
+  → step-up → erase; clickable command rows → verify panel (issued,
+  expires, nonce, status, result, audit timeline); Recovery codes card
+  (remaining count, password-confirmed generate, codes shown once with
+  copy + "I have saved these codes" checkbox gating Close); "Sign out
+  all other sessions" (two-click confirm); device "Sign out" link
+  (two-click confirm); "Forgot password? Recover with a recovery code"
+  form on the auth view. No `confirm()` in any new flow.
+- **Android** (47 .kt files, zero new dependencies, no new permissions):
+  - API layer: all 7 new endpoints + DTOs (paths/methods/fields match
+    the backend contract exactly); `CreateCommandRequest` gains
+    `step_up_token`; `CommandDto` gains `nonce_truncated`.
+  - Erase: `DeviceAdminManager.wipeData()`, `EraseCountdown`
+    (state + notification + backstop enqueue + abort with ack),
+    `EraseWorker` (backstop wiper), `EraseCountdownActivity`
+    (over-lock-screen countdown, credential-confirmed abort, failed-wipe
+    screen when admin was revoked mid-countdown), `EraseStore` (pending
+    erase + absolute deadline, StateFlow), `MainActivity` surfaces the
+    countdown on launch (erase takes precedence over Lost Mode).
+    Device-admin strings + Settings text now disclose erase.
+  - `CommandExecutor`: `erase` action + ack wording — executed results
+    prefixed `Verified — `, replays `Duplicate — already executed, replay
+    ignored`, unknown actions `Failed verification — unknown action: …`.
+  - Command Center: online/offline line, danger-zone Erase section
+    (type ERASE + password → step-up → send; disabled offline or without
+    admin), clickable rows → verify dialog, `erase` rows with alert icon.
+  - Recovery: `RecoveryScreen` + `RecoveryViewModel` (Settings →
+    remaining count, generate, show-once box with copy-all + saved
+    checkbox), `RecoverAccountScreen` (Login → email + code + new
+    password → "Password changed — log in with your new password").
+  - Settings: "Recovery codes" row, "Sign out all other sessions"
+    (confirm dialog → "N other sessions signed out"), "Sign out this
+    phone" (confirm dialog; stops tracking, cancels periodic work).
+  - `LocationService` registers a `ConnectivityManager.NetworkCallback`;
+    onAvailable enqueues a one-time worker so commands are fetched as
+    soon as connectivity returns (only while tracking runs; no manifest
+    CONNECTIVITY_ACTION receiver — it doesn't fire on Android 7+).
+  - AuthRepository: `stepUp`, `generateRecoveryCodes`,
+    `recoveryCodesRemaining`, `recover`, `revokeOtherSessions`;
+    DeviceRepository: `signOutDevice` (clears local device state when
+    it is this phone).
+
+### Test the new endpoints (BASE = deployed worker URL)
+
+Derive a key for curl (Node, same KDF as the dashboard):
+`node -e "const c=require('crypto');console.log(c.pbkdf2Sync(process.argv[1],Buffer.from(process.argv[2],'hex'),600000,32,'sha256').toString('hex'))" '<password>' '<salt-hex>'` — get the salt first via `curl -s "$BASE/api/v1/auth/salt?email=$EMAIL"`.
+
+```sh
+# step-up (DERIVED_KEY = hex PBKDF2-SHA256 600k of the password with the user's salt)
+curl -s -X POST $BASE/api/v1/auth/step-up \
+  -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+  -d "{\"derived_key\":\"$DERIVED_KEY\"}"
+# → {"step_up_token":"...","expires_in":600}  (wrong password → 403 'incorrect password')
+# save it: STEP_UP_TOKEN=<from above>
+
+# generate recovery codes (shown once; old codes invalidated)
+curl -s -X POST $BASE/api/v1/auth/recovery-codes/generate \
+  -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+  -d "{\"step_up_token\":\"$STEP_UP_TOKEN\"}"
+# → {"codes":["XXXX-XXXX-XXXX", ...]}  (reusing the same token → 403)
+
+# remaining codes (never returns the codes themselves)
+curl -s $BASE/api/v1/auth/recovery-codes -H "Authorization: Bearer $ACCESS"
+# → {"remaining":10}
+
+# revoke all other sessions
+curl -s -X POST $BASE/api/v1/auth/sessions/revoke-others \
+  -H "Authorization: Bearer $ACCESS"
+# → {"revoked":2}
+
+# erase (needs a FRESH step-up token — each token is single-use — and an online device)
+curl -s -X POST $BASE/api/v1/devices/$DEVICE_ID/commands \
+  -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+  -d "{\"action\":\"erase\",\"step_up_token\":\"$STEP_UP_TOKEN\"}"
+# → 201 command with expires_at ~5 min out; no/bad token → 403; 2nd erase within 1h → 429; offline device → 409
+
+# non-erase command now queues 24h (check expires_at)
+curl -s -X POST $BASE/api/v1/devices/$DEVICE_ID/commands \
+  -H "Authorization: Bearer $ACCESS" -H 'Content-Type: application/json' \
+  -d '{"action":"ring"}'
+
+# command verify (COMMAND_ID from any create response)
+curl -s $BASE/api/v1/commands/$COMMAND_ID -H "Authorization: Bearer $ACCESS"
+# → {"command":{...,"nonce_truncated":"abcd1234…",...},"audit":[{"event":"command_create",...}]}
+
+# device sign-out (kills the device token + other sessions; keeps the row + history)
+curl -s -X POST $BASE/api/v1/devices/$DEVICE_ID/sign-out \
+  -H "Authorization: Bearer $ACCESS" -i
+# → 204; afterwards the old device token gets 401 on /heartbeat and /commands/pending
+
+# recover with a recovery code (no auth; NEW_SALT = 32 fresh random hex chars,
+# NEW_DERIVED_KEY = hex PBKDF2-SHA256 600k of the new password with NEW_SALT)
+curl -s -X POST $BASE/api/v1/auth/recover -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$EMAIL\",\"code\":\"XXXX-XXXX-XXXX\",\"salt\":\"$NEW_SALT\",\"derived_key\":\"$NEW_DERIVED_KEY\"}" -i
+# → 204; wrong code or unknown email → 401 'invalid email or recovery code'; reusing the code → 401
+# remaining count drops by 1 afterwards; all sessions are dead — log in again with the new password
+```
+
+### Phase 3 stubbed / gaps
+
+- **Erase rate limit is per-isolate** (in-memory limiter) — a burst spread
+  across isolates can exceed 1/hour. Same caveat as all existing limits.
+- **Sign-out re-pair needs unlink + re-add** (the rotated token is
+  discarded, so the device cannot re-pair in place; history is lost with
+  the unlink). A pair-with-token flow would fix this.
+- **No-screen-lock abort unavailable** (see erase limits above).
+- **Recovery codes never expire**; used codes stay in the table (marked
+  used). Expired step-up tokens are never purged (rows are tiny; a purge
+  job would clean them).
+- **No Android UI lists security events yet** (still dashboard-only;
+  carried over from Phase 2).
+- Android still never compiled on this VM — CI is the first real build.
+
 ## Phase 2 Protection (built 16 Nov 2026, not yet deployed)
 
 Remote commands (ring, lock, Lost Mode), SIM-change alerts, device status
@@ -28,9 +249,10 @@ commands in `UploadWorker`, which runs at most every 15 minutes
 the phone within ~15 minutes in the worst case — sooner if the phone's
 periodic work runs earlier, and within seconds when the owner sends the
 command from the Command Center on the same phone (it enqueues a one-time
-worker). Commands expire after 5 minutes, so a phone that is offline for
-more than 5 minutes will find the command expired on its next poll and the
-owner must re-send. Push is never command authentication: the phone
+worker). Commands expired after 5 minutes in Phase 2; Phase 3 extended
+non-erase commands to 24h so an offline phone no longer loses them (erase
+still expires in 5 minutes and refuses offline devices). Push is never
+command authentication: the phone
 fetches over authenticated TLS (device token) and executes only commands
 bound to its own device id, with id+nonce replay protection.
 
@@ -290,12 +512,14 @@ device → check the map, history, sessions, audit, privacy panels.
 
 ## NOT built in this pass (per MVP scope)
 
-Vault, remote erase, SMS commands, FMD/Traccar coupling, geofencing,
+Vault, SMS commands, FMD/Traccar coupling, geofencing,
 advanced analytics, passkeys/TOTP. (Ring, lock and Lost Mode arrived in
-Phase 2, above.) No secret camera, no stealth, no hidden surveillance
+Phase 2, above; remote erase, recovery codes and remote sign-out arrived
+in Phase 3.) No secret camera, no stealth, no hidden surveillance
 anywhere in the code.
 
 ## Rate limits (in-memory, per-isolate)
 
-Auth endpoints 10/min/IP; location upload 120/min/device. Documented in
-`src/lib/ratelimit.ts`.
+Auth endpoints 10/min/IP (includes step-up and recover); location upload
+120/min/device; command creation 20/min/user; erase 1/hour/user.
+Documented in `src/lib/ratelimit.ts`.

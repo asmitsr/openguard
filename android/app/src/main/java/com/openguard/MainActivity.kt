@@ -16,16 +16,21 @@ import androidx.navigation.navArgument
 import com.openguard.core.location.LocationService
 import com.openguard.core.location.TrackingPermissions
 import com.openguard.core.location.UploadWorker
+import com.openguard.core.security.EraseStore
 import com.openguard.core.security.LostModeStore
 import com.openguard.feature.auth.AuthViewModel
 import com.openguard.feature.auth.LoginScreen
+import com.openguard.feature.auth.RecoverAccountScreen
 import com.openguard.feature.auth.RegisterScreen
 import com.openguard.feature.devices.ConsentScreen
 import com.openguard.feature.devices.DeviceListScreen
 import com.openguard.feature.devices.DeviceViewModel
 import com.openguard.feature.security.CommandCenterScreen
 import com.openguard.feature.security.CommandCenterViewModel
+import com.openguard.feature.security.EraseCountdownActivity
 import com.openguard.feature.security.LostModeActivity
+import com.openguard.feature.settings.RecoveryScreen
+import com.openguard.feature.settings.RecoveryViewModel
 import com.openguard.feature.settings.SettingsScreen
 import com.openguard.feature.settings.SettingsViewModel
 import com.openguard.feature.tracking.HistoryScreen
@@ -37,8 +42,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val app = application as OpenGuardApp
-        // Lost Mode on: surface the Lost Mode screen over the normal UI.
-        if (LostModeStore.isOn(this)) {
+        // Pending erase takes precedence over Lost Mode: the countdown
+        // screen is the one the owner must see first.
+        if (EraseStore.pending(this) != null) {
+            startActivity(Intent(this, EraseCountdownActivity::class.java))
+        } else if (LostModeStore.isOn(this)) {
+            // Lost Mode on: surface the Lost Mode screen over the normal UI.
             startActivity(Intent(this, LostModeActivity::class.java))
         }
         setContent {
@@ -57,6 +66,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             onRegisterClick = { navController.navigate("register") },
+                            onRecoverClick = { navController.navigate("recover") },
                         )
                     }
                     composable("register") {
@@ -70,6 +80,15 @@ class MainActivity : ComponentActivity() {
                                 }
                             },
                             onLoginClick = { navController.popBackStack() },
+                        )
+                    }
+                    composable("recover") {
+                        val vm: AuthViewModel =
+                            viewModel(factory = vmFactory { AuthViewModel(app.authRepository) })
+                        RecoverAccountScreen(
+                            viewModel = vm,
+                            onBack = { navController.popBackStack() },
+                            onRecovered = { navController.popBackStack() },
                         )
                     }
                     composable("devices") {
@@ -169,7 +188,11 @@ class MainActivity : ComponentActivity() {
                         val deviceName = entry.arguments?.getString("deviceName") ?: "Device"
                         val vm: CommandCenterViewModel =
                             viewModel(factory = vmFactory {
-                                CommandCenterViewModel(app.commandRepository, app.deviceRepository)
+                                CommandCenterViewModel(
+                                    app.commandRepository,
+                                    app.deviceRepository,
+                                    app.authRepository,
+                                )
                             })
                         CommandCenterScreen(
                             deviceId = deviceId,
@@ -180,7 +203,9 @@ class MainActivity : ComponentActivity() {
                     }
                     composable("settings") {
                         val vm: SettingsViewModel =
-                            viewModel(factory = vmFactory { SettingsViewModel(app.authRepository) })
+                            viewModel(factory = vmFactory {
+                                SettingsViewModel(app.authRepository, app.deviceRepository)
+                            })
                         SettingsScreen(
                             viewModel = vm,
                             userEmail = app.tokenStore.userEmail,
@@ -192,6 +217,22 @@ class MainActivity : ComponentActivity() {
                                     popUpTo(navController.graph.id) { inclusive = true }
                                 }
                             },
+                            onRecoveryClick = { navController.navigate("recovery") },
+                            onDeviceSignedOut = {
+                                LocationService.stop(this@MainActivity)
+                                UploadWorker.cancelPeriodic(this@MainActivity)
+                                navController.navigate("devices") {
+                                    popUpTo("settings") { inclusive = true }
+                                }
+                            },
+                        )
+                    }
+                    composable("recovery") {
+                        val vm: RecoveryViewModel =
+                            viewModel(factory = vmFactory { RecoveryViewModel(app.authRepository) })
+                        RecoveryScreen(
+                            viewModel = vm,
+                            onBack = { navController.popBackStack() },
                         )
                     }
                 }

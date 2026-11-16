@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 data class AuthUiState(
     val isLoading: Boolean = false,
     val isLoggedIn: Boolean = false,
+    val recovered: Boolean = false,
     val error: String? = null,
 )
 
@@ -35,6 +36,17 @@ class AuthViewModel(private val repository: AuthRepository) : ViewModel() {
             _uiState.value = AuthUiState(isLoading = true)
             _uiState.value = when (val result = repository.register(email, password)) {
                 is Result.Success -> AuthUiState(isLoggedIn = true)
+                is Result.Error -> AuthUiState(error = result.message)
+            }
+        }
+    }
+
+    /** Password reset with a recovery code (no auth). */
+    fun recover(email: String, code: String, newPassword: String) {
+        viewModelScope.launch {
+            _uiState.value = AuthUiState(isLoading = true)
+            _uiState.value = when (val result = repository.recover(email, code, newPassword)) {
+                is Result.Success -> AuthUiState(recovered = true)
                 is Result.Error -> AuthUiState(error = result.message)
             }
         }

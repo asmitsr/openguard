@@ -144,3 +144,48 @@ object LostModeStore {
         _isOn.value = isOn(context)
     }
 }
+
+/**
+ * Pending remote-erase state, backed by the same prefs file. The deadline
+ * is an absolute timestamp, so a rotation or process death can never
+ * stretch the grace period. The StateFlow lets EraseCountdownActivity
+ * finish itself the moment the erase is aborted; refresh() re-reads the
+ * persisted value after a process restart.
+ */
+object EraseStore {
+    private const val KEY_ERASE_COMMAND_ID = "erase_command_id"
+    private const val KEY_ERASE_DEADLINE_MS = "erase_deadline_ms"
+
+    data class PendingErase(val commandId: String, val deadlineMs: Long)
+
+    private val _pending = MutableStateFlow<PendingErase?>(null)
+    val pendingFlow: StateFlow<PendingErase?> = _pending.asStateFlow()
+
+    fun pending(context: Context): PendingErase? {
+        val prefs = securityPrefs(context)
+        val id = prefs.getString(KEY_ERASE_COMMAND_ID, null) ?: return null
+        val deadline = prefs.getLong(KEY_ERASE_DEADLINE_MS, 0)
+        if (deadline <= 0) return null
+        return PendingErase(id, deadline)
+    }
+
+    fun setPending(context: Context, commandId: String, deadlineMs: Long) {
+        securityPrefs(context).edit {
+            putString(KEY_ERASE_COMMAND_ID, commandId)
+            putLong(KEY_ERASE_DEADLINE_MS, deadlineMs)
+        }
+        _pending.value = PendingErase(commandId, deadlineMs)
+    }
+
+    fun clear(context: Context) {
+        securityPrefs(context).edit {
+            remove(KEY_ERASE_COMMAND_ID)
+            remove(KEY_ERASE_DEADLINE_MS)
+        }
+        _pending.value = null
+    }
+
+    fun refresh(context: Context) {
+        _pending.value = pending(context)
+    }
+}

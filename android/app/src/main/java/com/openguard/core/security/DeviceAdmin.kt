@@ -15,7 +15,8 @@ import kotlinx.coroutines.launch
 
 /**
  * Device admin receiver. Used ONLY for lockNow() (Lock + Lost Mode
- * commands). No password policy: password control has been dead since
+ * commands) and wipeData() (Erase command, after a 60-second on-phone
+ * countdown). No password policy: password control has been dead since
  * Android 9-11 and is deliberately not requested.
  */
 class OpenGuardDeviceAdmin : DeviceAdminReceiver() {
@@ -64,6 +65,23 @@ object DeviceAdminManager {
             val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
             if (!dpm.isAdminActive(componentName(context))) return false
             dpm.lockNow()
+            true
+        } catch (e: SecurityException) {
+            false
+        }
+    }
+
+    /**
+     * Factory-resets the phone, including external storage. False when
+     * admin is not active (or on error). Factory Reset Protection is
+     * deliberately NOT cleared (no WIPE_RESET_PROTECTION_DATA): a wiped
+     * stolen phone stays locked to the owner's Google account.
+     */
+    fun wipeData(context: Context): Boolean {
+        return try {
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+            if (!dpm.isAdminActive(componentName(context))) return false
+            dpm.wipeData(DevicePolicyManager.WIPE_EXTERNAL_STORAGE)
             true
         } catch (e: SecurityException) {
             false

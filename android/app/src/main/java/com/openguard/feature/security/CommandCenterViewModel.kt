@@ -4,7 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.openguard.core.common.Result
 import com.openguard.core.network.CommandDto
+import com.openguard.core.network.CommandVerifyResponse
+import com.openguard.feature.auth.AuthRepository
 import com.openguard.feature.devices.DeviceRepository
+import java.time.Instant
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -14,6 +17,7 @@ data class CommandCenterUiState(
     val commands: List<CommandDto> = emptyList(),
     val lostMode: Boolean = false,
     val lostMessage: String? = null,
+    val isOnline: Boolean = false,
     val isLoading: Boolean = false,
     val sending: String? = null,
     val error: String? = null,
@@ -22,6 +26,7 @@ data class CommandCenterUiState(
 class CommandCenterViewModel(
     private val commands: CommandRepository,
     private val devices: DeviceRepository,
+    private val auth: AuthRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(CommandCenterUiState(isLoading = true))
@@ -30,7 +35,7 @@ class CommandCenterViewModel(
     /** Id of this phone's device record, if registered. */
     val thisDeviceId: String? get() = devices.thisDeviceId
 
-    /** Loads the command history + the device's current lost-mode state. */
+    /** Loads the command history + the device's current lost-mode and online state. */
     fun load(deviceId: String) {
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true, error = null)
@@ -42,11 +47,12 @@ class CommandCenterViewModel(
                     commands = commandsResult.value,
                     lostMode = device?.lostMode == true,
                     lostMessage = device?.lostMessage,
+                    isOnline = device?.lastSeenAt?.let { isOnline(it) } == true,
                 )
                 is Result.Error -> _state.value.copy(
                     isLoading = false,
                     sending = null,
-                    error = commandsResult.message,
+                    error = friendlyError(commandsResult.message),
                 )
             }
         }
@@ -59,13 +65,76 @@ class CommandCenterViewModel(
                 is Result.Success -> load(deviceId)
                 is Result.Error -> _state.value = _state.value.copy(
                     sending = null,
-                    error = result.message,
+                    error = friendlyError(result.message),
                 )
             }
         }
     }
 
+    /**
+     * Erase: the typed confirmation must be exactly ERASE, then the
+     * password is stepped up and the erase command is issued with the
+     * single-use step-up token. The server enforces the remaining rules
+     * (online, rate limit) and its error is shown as-is.
+     */
+    fun sendErase(deviceId: String, password: String, typedConfirm: String) {
+        if (typedConfirm != "ERASE") {
+            _state.value = _state.value.copy(error = "Type ERASE exactly to confirm.")
+            return
+        }
+        viewModelScope.launch {
+            _state.value = _state.value.copy(sending = "erase", error = null)
+            when (val stepUp = auth.stepUp(password)) {
+                is Result.Error -> _state.value = _state.value.copy(
+                    sending = null,
+                    error = friendlyError(stepUp.message),
+                )
+                is Result.Success -> when (
+                    val result = commands.createCommand(
+                        deviceId, "erase", stepUpToken = stepUp.value,
+                    )
+                ) {
+                    is Result.Success -> load(deviceId)
+                    is Result.Error -> _state.value = _state.value.copy(
+                        sending = null,
+                        error = friendlyError(result.message),
+                    )
+                }
+            }
+        }
+    }
+
+    /** One command plus its audit timeline, for the verify dialog. */
+    suspend fun verifyCommand(commandId: String): Result<CommandVerifyResponse> =
+        commands.verifyCommand(commandId)
+
     fun clearError() {
         _state.value = _state.value.copy(error = null)
+    }
+
+    companion object {
+        /** Online = last seen within the last 5 minutes. */
+        private const val ONLINE_WINDOW_MS = 5 * 60 * 1000L
+
+        private fun isOnline(lastSeenAt: String): Boolean {
+            val at = runCatching { Instant.parse(lastSeenAt) }.getOrNull() ?: return false
+            // A slightly future timestamp (clock skew) still means seen.
+            return System.currentTimeMillis() - at.toEpochMilli() <= ONLINE_WINDOW_MS
+        }
+
+        /**
+         * Never show a raw parser exception to the user: a response the
+         * app could not read becomes one short friendly line. Other
+         * server error messages pass through as-is.
+         */
+        private fun friendlyError(message: String): String {
+            return if ("JsonObject" in message || "JsonNull" in message ||
+                "JsonSyntaxException" in message || "MalformedJsonException" in message
+            ) {
+                "Could not read the server response — please try again."
+            } else {
+                message
+            }
+        }
     }
 }

@@ -42,6 +42,14 @@ ul{margin:0;padding-left:18px;font-size:14px}.err{color:#b3261e;font-size:14px;m
   <input id="password" type="password" placeholder="Password" autocomplete="current-password">
   <div class="row"><button id="auth-submit">Log in</button></div>
   <p class="muted"><button class="link" id="auth-toggle">Create an account instead</button></p>
+  <p class="muted"><button class="link" id="recover-toggle">Forgot password? Recover with a recovery code</button></p>
+  <div id="recover-form" style="display:none">
+    <input id="recover-email" type="email" placeholder="Email" autocomplete="email">
+    <input id="recover-code" placeholder="Recovery code (XXXX-XXXX-XXXX)">
+    <input id="recover-password" type="password" placeholder="New password (8+ characters)" autocomplete="new-password">
+    <button id="recover-submit">Recover password</button>
+    <p class="err" id="recover-err"></p>
+  </div>
 </section>
 
 <!-- App -->
@@ -79,15 +87,25 @@ ul{margin:0;padding-left:18px;font-size:14px}.err{color:#b3261e;font-size:14px;m
   <div class="grid">
     <section class="card">
       <h2>Command Center <span id="command-device" class="muted"></span></h2>
+      <p class="muted" id="device-online"></p>
       <input id="lost-message" placeholder="Lost message (shown on the phone)" maxlength="200">
       <div class="row">
         <button id="cmd-ring-btn" class="cmd-btn secondary" disabled>Ring</button>
         <button id="cmd-lock-btn" class="cmd-btn secondary" disabled>Lock</button>
         <button id="cmd-lost-on-btn" class="cmd-btn secondary" disabled>Lost Mode ON</button>
         <button id="cmd-lost-off-btn" class="cmd-btn secondary" disabled>Lost Mode OFF</button>
+        <button id="cmd-erase-btn" class="cmd-btn danger" disabled>Erase device</button>
+      </div>
+      <div id="erase-panel" style="display:none;background:#fdf0ef;border:1px solid #b3261e;border-radius:8px;padding:12px;margin-top:10px">
+        <b>Erase this device?</b>
+        <p class="muted">This permanently wipes all apps, photos, files, accounts and SD card contents. The phone stays locked to your Google account by Factory Reset Protection — only you can set it up again. The device must be online; erase cannot be queued.</p>
+        <input id="erase-confirm" placeholder="Type ERASE to confirm">
+        <input id="erase-password" type="password" placeholder="Your password">
+        <div class="row"><button id="erase-submit" class="danger">Erase device</button><button id="erase-cancel" class="secondary">Cancel</button></div>
       </div>
       <p class="muted" id="cmd-status">Select a device to send commands.</p>
       <div id="command-list"></div>
+      <div id="verify-panel" style="display:none"></div>
     </section>
     <section class="card">
       <h2>Alerts <span id="alert-device" class="muted"></span></h2>
@@ -96,7 +114,27 @@ ul{margin:0;padding-left:18px;font-size:14px}.err{color:#b3261e;font-size:14px;m
   </div>
 
   <div class="grid">
-    <section class="card"><h2>Sessions</h2><div id="session-list"><p class="muted">Loading…</p></div></section>
+    <section class="card"><h2>Sessions</h2><div id="session-list"><p class="muted">Loading…</p></div>
+      <button id="revoke-others-btn" class="secondary">Sign out all other sessions</button>
+      <p class="err" id="sessions-err"></p>
+    </section>
+    <section class="card"><h2>Recovery codes</h2>
+      <p class="muted"><span id="recovery-count">Loading…</span> unused codes remaining.</p>
+      <p class="muted">Recovery codes let you reset your password if you forget it. Generating new codes invalidates the old ones.</p>
+      <button id="recovery-show-btn" class="secondary">Generate new codes</button>
+      <div id="recovery-generate" style="display:none;margin-top:10px">
+        <input id="recovery-password" type="password" placeholder="Your password">
+        <button id="recovery-generate-btn">Confirm &amp; generate</button>
+      </div>
+      <div id="recovery-box" style="display:none;background:#fff8e1;border:1px solid #c6a46a;border-radius:8px;padding:12px;margin-top:10px">
+        <b>Save these codes — they are shown once only.</b>
+        <p id="recovery-codes" style="font-family:monospace;word-break:break-all"></p>
+        <button id="recovery-copy-btn" class="secondary">Copy codes</button>
+        <p><label><input type="checkbox" id="recovery-saved" style="width:auto"> I have saved these codes</label></p>
+        <button id="recovery-close-btn" disabled>Close</button>
+      </div>
+      <p class="err" id="recovery-err"></p>
+    </section>
     <section class="card"><h2>Audit log</h2><div id="audit-list"><p class="muted">Loading…</p></div></section>
   </div>
 
@@ -177,7 +215,7 @@ function showAuth(){
 function showApp(){
   $('auth-view').style.display = 'none'; $('app-view').style.display = 'block'; $('logout-btn').style.display = 'inline-block';
   initMap();
-  loadDevices(); loadSessions(); loadAudit(); loadPrivacy();
+  loadDevices(); loadSessions(); loadRecoveryCodes(); loadAudit(); loadPrivacy();
 }
 
 $('auth-toggle').onclick = function(){
@@ -214,6 +252,33 @@ $('auth-submit').onclick = async function(){
 $('logout-btn').onclick = async function(){
   try{ await api('/auth/logout', {method:'POST'}); }catch(_){}
   showAuth();
+};
+
+/* ---- Forgot password: recover with a recovery code ---- */
+$('recover-toggle').onclick = function(){
+  var form = $('recover-form');
+  var show = form.style.display === 'none';
+  form.style.display = show ? 'block' : 'none';
+  if(show && !$('recover-email').value) $('recover-email').value = $('email').value;
+  $('recover-err').textContent = '';
+};
+$('recover-submit').onclick = async function(){
+  var email = $('recover-email').value.trim(), code = $('recover-code').value.trim(), password = $('recover-password').value;
+  if(!email || !code){ $('recover-err').textContent = 'Enter your email and recovery code.'; return; }
+  if(password.length < 8){ $('recover-err').textContent = 'New password must be at least 8 characters.'; return; }
+  var btn = $('recover-submit');
+  btn.disabled = true; btn.textContent = 'Recovering…';
+  try{
+    var salt = hex(crypto.getRandomValues(new Uint8Array(16)));
+    await api('/auth/recover', {method: 'POST', body: {email: email, code: code, salt: salt, derived_key: await deriveKey(password, salt)}});
+    $('recover-form').style.display = 'none';
+    $('recover-code').value = ''; $('recover-password').value = '';
+    isRegister = false;
+    $('auth-title').textContent = 'Log in'; $('auth-submit').textContent = 'Log in';
+    $('auth-toggle').textContent = 'Create an account instead';
+    $('auth-err').textContent = 'Password changed — log in with your new password.';
+  }catch(e){ $('recover-err').textContent = e.message; }
+  finally{ btn.disabled = false; btn.textContent = 'Recover password'; }
 };
 
 /* ---- Map ---- */
@@ -281,6 +346,7 @@ async function loadDevices(){
       try{ devices[i]._latest = await api('/devices/' + devices[i].id + '/latest'); }catch(_){ devices[i]._latest = null; }
     }
     renderDevices(); drawMarkers();
+    updateOnlineState();
     if(selected && !devices.some(function(d){ return d.id === selected; })){ selected = null; setCommandButtons(false); }
   }catch(e){ $('device-list').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
 }
@@ -295,11 +361,12 @@ function renderDevices(){
       (d.network_type ? ' · ' + esc(d.network_type) : '') +
       (d.location_permission ? ' · Location permission: ' + esc(d.location_permission) : '') +
       (d.location_enabled != null ? ' · Location ' + (d.location_enabled ? 'on' : 'off') : '') + '</span><br>' +
-      '<button class="link unlink-btn" data-id="' + esc(d.id) + '">Unlink</button></div>';
+      '<button class="link unlink-btn" data-id="' + esc(d.id) + '">Unlink</button> ' +
+      '<button class="link signout-btn" data-id="' + esc(d.id) + '">Sign out</button></div>';
   }).join('');
   document.querySelectorAll('.dev').forEach(function(el){
     el.addEventListener('click', function(ev){
-      if(ev.target.classList.contains('unlink-btn')) return;
+      if(ev.target.classList.contains('unlink-btn') || ev.target.classList.contains('signout-btn')) return;
       selectDevice(el.getAttribute('data-id'));
     });
   });
@@ -311,6 +378,23 @@ function renderDevices(){
       try{ await api('/devices/' + id, {method: 'DELETE'}); loadDevices(); loadPrivacy(); }catch(e){ $('dev-err').textContent = e.message; }
     });
   });
+  /* Two-click inline confirm (same pattern as delete-account): first click
+     arms the link, second click within 10 s signs the device out. */
+  document.querySelectorAll('.signout-btn').forEach(function(btn){
+    btn.addEventListener('click', async function(ev){
+      ev.stopPropagation();
+      var id = btn.getAttribute('data-id');
+      if(!btn.dataset.armed){
+        btn.dataset.armed = '1';
+        btn.textContent = 'Click again to sign out — keeps the device and its history, but kills its token and your other sessions';
+        btn._timer = setTimeout(function(){ delete btn.dataset.armed; btn.textContent = 'Sign out'; }, 10000);
+        return;
+      }
+      clearTimeout(btn._timer);
+      try{ await api('/devices/' + id + '/sign-out', {method: 'POST'}); loadDevices(); loadSessions(); }
+      catch(e){ $('dev-err').textContent = e.message; }
+    });
+  });
 }
 function selectDevice(id){
   selected = id;
@@ -319,7 +403,10 @@ function selectDevice(id){
   $('history-device').textContent = d ? '— ' + d.name : '';
   $('command-device').textContent = d ? '— ' + d.name : '';
   $('alert-device').textContent = d ? '— ' + d.name : '';
+  $('erase-panel').style.display = 'none';
+  $('verify-panel').style.display = 'none';
   setCommandButtons(true);
+  updateOnlineState();
   if(d && d._latest && map){ map.flyTo({center: [d._latest.longitude, d._latest.latitude], zoom: 14}); drawAccuracy(d._latest); }
   loadHistory(false);
   loadCommands();
@@ -377,9 +464,20 @@ $('export-csv-btn').onclick = function(){ exportData('csv'); };
 $('export-json-btn').onclick = function(){ exportData('json'); };
 
 /* ---- Command Center + alerts ---- */
+/* Online = seen within the last 5 minutes (same rule the server uses for
+   erase). Offline devices still receive commands: they queue for 24 hours. */
+function isOnline(d){ return !!(d && d.last_seen_at && (Date.now() - new Date(d.last_seen_at).getTime()) < 5 * 60 * 1000); }
+function updateOnlineState(){
+  var d = devices.find(function(x){ return x.id === selected; });
+  $('device-online').textContent = d ? (isOnline(d) ? 'Online' : 'Offline — commands queue for up to 24 hours') : '';
+  $('cmd-erase-btn').disabled = !d || !isOnline(d);
+  if(d && !isOnline(d)) $('cmd-erase-btn').title = 'Erase requires the device to be online';
+  else $('cmd-erase-btn').title = '';
+}
 function setCommandButtons(enabled){
   document.querySelectorAll('.cmd-btn').forEach(function(b){ b.disabled = !enabled; });
   if(!enabled) $('cmd-status').textContent = 'Select a device to send commands.';
+  else updateOnlineState();
 }
 async function sendCommand(action){
   if(!selected) return;
@@ -392,7 +490,7 @@ async function sendCommand(action){
   $('cmd-status').textContent = 'Sending…';
   try{
     await api('/devices/' + selected + '/commands', {method: 'POST', body: body});
-    $('cmd-status').textContent = 'Command sent — the phone picks it up within ~15 minutes.';
+    $('cmd-status').textContent = 'Command sent — the phone picks it up within ~15 minutes; queued for up to 24 hours if offline.';
     loadCommands(); loadDevices();
   }catch(e){ $('cmd-status').textContent = e.message; }
   finally{ if(selected) setCommandButtons(true); }
@@ -401,6 +499,30 @@ $('cmd-ring-btn').onclick = function(){ sendCommand('ring'); };
 $('cmd-lock-btn').onclick = function(){ sendCommand('lock'); };
 $('cmd-lost-on-btn').onclick = function(){ sendCommand('lost_mode_on'); };
 $('cmd-lost-off-btn').onclick = function(){ sendCommand('lost_mode_off'); };
+/* Erase: inline flow, no confirm(). Type ERASE + password, then step-up
+   auth unlocks the erase command. The button stays disabled while the
+   device is offline — the server refuses offline erase anyway. */
+$('cmd-erase-btn').onclick = function(){
+  if(!selected) return;
+  $('erase-confirm').value = ''; $('erase-password').value = '';
+  $('erase-panel').style.display = 'block';
+};
+$('erase-cancel').onclick = function(){ $('erase-panel').style.display = 'none'; };
+$('erase-submit').onclick = async function(){
+  if($('erase-confirm').value.trim() !== 'ERASE'){ $('cmd-status').textContent = 'Type ERASE to confirm.'; return; }
+  var pw = $('erase-password').value;
+  var email = localStorage.getItem('openguard_email');
+  if(!pw || !email){ $('cmd-status').textContent = 'Enter your password to confirm.'; return; }
+  $('cmd-status').textContent = 'Verifying…';
+  try{
+    var s = await api('/auth/salt?email=' + encodeURIComponent(email));
+    var step = await api('/auth/step-up', {method: 'POST', body: {derived_key: await deriveKey(pw, s.salt)}});
+    await api('/devices/' + selected + '/commands', {method: 'POST', body: {action: 'erase', step_up_token: step.step_up_token}});
+    $('erase-panel').style.display = 'none';
+    $('cmd-status').textContent = 'Erase command sent — the phone will wipe itself when it picks it up.';
+    loadCommands(); loadDevices();
+  }catch(e){ $('cmd-status').textContent = e.message; }
+};
 async function loadCommands(){
   if(!selected) return;
   try{
@@ -409,9 +531,26 @@ async function loadCommands(){
     if(!list.length){ $('command-list').innerHTML = '<p class="muted">No commands sent yet.</p>'; return; }
     $('command-list').innerHTML = '<table><tr><th>Action</th><th>Status</th><th>Time</th><th>Result</th></tr>' +
       list.map(function(cmd){
-        return '<tr><td>' + esc(cmd.action) + '</td><td>' + esc(cmd.status) + '</td><td>' + esc(fmtTime(cmd.issued_at)) + '</td><td>' + esc(cmd.result || '—') + '</td></tr>';
+        return '<tr class="cmd-row" data-id="' + esc(cmd.id) + '" style="cursor:pointer"><td>' + esc(cmd.action) + '</td><td>' + esc(cmd.status) + '</td><td>' + esc(fmtTime(cmd.issued_at)) + '</td><td>' + esc(cmd.result || '—') + '</td></tr>';
       }).join('') + '</table>';
+    document.querySelectorAll('.cmd-row').forEach(function(row){
+      row.addEventListener('click', function(){ loadCommandDetail(row.getAttribute('data-id')); });
+    });
   }catch(e){ $('command-list').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
+}
+async function loadCommandDetail(id){
+  try{
+    var d = await api('/commands/' + id);
+    var cmd = d.command;
+    var audit = (d.audit || []).map(function(a){
+      return '<li><b>' + esc(a.event) + '</b> — ' + esc(fmtTime(a.created_at)) + '</li>';
+    }).join('');
+    $('verify-panel').innerHTML = '<h3>Command: ' + esc(cmd.action) + '</h3>' +
+      '<p class="muted">Issued ' + esc(fmtTime(cmd.issued_at)) + ' · Expires ' + esc(fmtTime(cmd.expires_at)) +
+      ' · Nonce ' + esc(cmd.nonce_truncated) + ' · Status ' + esc(cmd.status) + ' · Result ' + esc(cmd.result || '—') + '</p>' +
+      (audit ? '<ul>' + audit + '</ul>' : '<p class="muted">No audit events yet.</p>');
+    $('verify-panel').style.display = 'block';
+  }catch(e){ $('cmd-status').textContent = e.message; }
 }
 var EVENT_LABELS = {sim_changed: 'SIM changed — check if this was you', admin_disabled: 'Device admin disabled', location_permission_revoked: 'Location permission revoked', location_disabled: 'Location disabled', low_battery: 'Low battery', sync_gap: 'Sync gap'};
 async function loadAlerts(){
@@ -446,6 +585,73 @@ async function loadSessions(){
     });
   }catch(e){ $('session-list').innerHTML = '<p class="err">' + esc(e.message) + '</p>'; }
 }
+/* Two-click inline confirm (same pattern as delete-account). */
+var revokeOthersArmed = false, revokeOthersTimer = null;
+$('revoke-others-btn').onclick = async function(){
+  var btn = $('revoke-others-btn');
+  if(!revokeOthersArmed){
+    revokeOthersArmed = true;
+    btn.textContent = 'Click again to sign out all other sessions';
+    clearTimeout(revokeOthersTimer);
+    revokeOthersTimer = setTimeout(function(){ revokeOthersArmed = false; btn.textContent = 'Sign out all other sessions'; }, 10000);
+    return;
+  }
+  revokeOthersArmed = false; clearTimeout(revokeOthersTimer);
+  btn.textContent = 'Sign out all other sessions';
+  try{
+    var r = await api('/auth/sessions/revoke-others', {method: 'POST'});
+    $('sessions-err').textContent = 'Signed out ' + r.revoked + ' other session(s).';
+    loadSessions();
+  }catch(e){ $('sessions-err').textContent = e.message; }
+};
+/* ---- Recovery codes ---- */
+async function loadRecoveryCodes(){
+  try{
+    var r = await api('/auth/recovery-codes');
+    $('recovery-count').textContent = r.remaining;
+  }catch(e){ $('recovery-count').textContent = '—'; }
+}
+$('recovery-show-btn').onclick = function(){
+  $('recovery-generate').style.display = 'block';
+  $('recovery-show-btn').style.display = 'none';
+  $('recovery-err').textContent = '';
+};
+$('recovery-generate-btn').onclick = async function(){
+  var pw = $('recovery-password').value;
+  var email = localStorage.getItem('openguard_email');
+  if(!pw || !email){ $('recovery-err').textContent = 'Enter your password to confirm.'; return; }
+  var btn = $('recovery-generate-btn');
+  btn.disabled = true; btn.textContent = 'Generating…';
+  try{
+    var s = await api('/auth/salt?email=' + encodeURIComponent(email));
+    var step = await api('/auth/step-up', {method: 'POST', body: {derived_key: await deriveKey(pw, s.salt)}});
+    var r = await api('/auth/recovery-codes/generate', {method: 'POST', body: {step_up_token: step.step_up_token}});
+    $('recovery-generate').style.display = 'none';
+    $('recovery-show-btn').style.display = 'inline-block';
+    $('recovery-password').value = '';
+    $('recovery-codes').textContent = r.codes.join('\n');
+    $('recovery-saved').checked = false;
+    $('recovery-close-btn').disabled = true;
+    $('recovery-copy-btn').textContent = 'Copy codes';
+    $('recovery-box').style.display = 'block';
+    $('recovery-count').textContent = r.codes.length;
+    $('recovery-err').textContent = '';
+  }catch(e){ $('recovery-err').textContent = e.message; }
+  finally{ btn.disabled = false; btn.textContent = 'Confirm & generate'; }
+};
+$('recovery-copy-btn').onclick = async function(){
+  try{
+    await navigator.clipboard.writeText($('recovery-codes').textContent);
+    $('recovery-copy-btn').textContent = 'Copied!';
+  }catch(_){ $('recovery-copy-btn').textContent = 'Select the codes and copy manually'; }
+};
+$('recovery-saved').onchange = function(){
+  $('recovery-close-btn').disabled = !$('recovery-saved').checked;
+};
+$('recovery-close-btn').onclick = function(){
+  $('recovery-box').style.display = 'none';
+  $('recovery-codes').textContent = '';
+};
 async function loadAudit(){
   try{
     var list = await api('/audit');

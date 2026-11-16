@@ -63,6 +63,24 @@ app.delete('/:id', async (c) => {
   return c.body(null, 204)
 })
 
+// Signs a device out: its token is rotated to a random value nobody knows,
+// so the app on it can no longer authenticate and the device must be
+// unlinked + re-added to pair again. The device row and its history stay.
+// Also kills the user's other sessions — a lost phone's app session dies too.
+app.post('/:id/sign-out', async (c) => {
+  const auth = await authenticateUser(c)
+  if (!auth) return err(c, 401, 'unauthorized')
+  const deviceId = c.req.param('id')
+  const rows = await db(c.env)`
+    UPDATE devices SET token_hash = ${await sha256Hex(newToken())}
+    WHERE id = ${deviceId} AND user_id = ${auth.user.id} RETURNING id`
+  if (!rows.length) return err(c, 404, 'device not found')
+  await db(c.env)`
+    DELETE FROM sessions WHERE user_id = ${auth.user.id} AND id != ${auth.sessionId}`
+  await audit(c.env, auth.user.id, 'device_sign_out', deviceId)
+  return c.body(null, 204)
+})
+
 app.post('/:id/heartbeat', async (c) => {
   const device = await authenticateDevice(c, c.req.param('id'))
   if (!device) return err(c, 401, 'unauthorized')
