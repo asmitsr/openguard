@@ -4,6 +4,150 @@ Built 16 Nov 2026. Backend + dashboard verified (typecheck green, local
 `wrangler dev` smoke test passed, docs audit passed). Android written but
 never compiled (no SDK/Java on this VM) — first real build is GitHub Actions.
 
+## Professionalization round 1 — React dashboard + Docker self-host (built 17 Nov 2026, not yet deployed)
+
+First step of the gradual professionalization the user asked for (17 Nov
+00:10): keep the TypeScript/Hono backend on Workers (fast, always-on, free)
+and close the blueprint gaps that add real quality — a React + TypeScript
+dashboard and a Docker Compose self-host path. No API contract change: no
+endpoint, path, method, field, or status code changed; the Android app is
+untouched and keeps working. Hilt (Android DI) is a later round, not this one.
+
+### Deploy steps (parent) — in this order
+
+1. **Build the dashboard FIRST:** `cd backend/web && npm install`
+   (once) `&& npm run build` — produces `backend/web/dist/index.html`
+   (single self-contained file, 248,780 bytes). The Worker bundle step
+   FAILS without it: `src/index.ts` now imports `../web/dist/index.html`.
+2. **Deploy the Worker** with the existing esbuild bundle step
+   (`./node_modules/.bin/esbuild src/index.ts --bundle --format=esm
+   --platform=browser --target=es2022 --loader:.html=text
+   --outfile=dist/index.js`, then the cf.py upload as before). Bundle is
+   now 540,634 bytes (was 333,820) — the React dashboard replaced the
+   ~35 KB vanilla file. Cloudflare's Worker size limit is 64 MiB
+   uncompressed on Free and Paid alike (verified against the official
+   limits page 17 Nov 2026; the old 3 MB compressed Free limit was
+   removed in Sept 2026), so the bundle fits with huge headroom.
+3. **Push to GitHub** as before. `backend/web/dist/` and `backend/dist/`
+   are now gitignored (build outputs — a clean checkout rebuilds them);
+   do NOT include them in the push zip.
+4. **No Neon migration** in this round (no schema change). Smoke-test the
+   live dashboard after deploy (login + one device list + map render).
+
+### What was built — React dashboard (`backend/web/`)
+
+- Vite + React 19 + TypeScript, exact-pinned deps, `build` =
+  `tsc --noEmit && vite build`. No state library, no router, no
+  component library — plain React + fetch.
+- `vite-plugin-singlefile` inlines all local JS + CSS into one
+  `dist/index.html` (verified: dist contains only index.html; the only
+  external `<script src>` / `<link href>` are the MapLibre unpkg CDN
+  tags, same as the old dashboard). The existing esbuild
+  `--loader:.html=text` deploy flow works unchanged.
+- Full feature parity with the old vanilla dashboard, verified by the
+  coordinator against the original file: auth (register/login/logout),
+  forgot-password recovery, devices list/add/unlink, device sign-out,
+  MapLibre map (OSM raster, markers, accuracy circle, history path),
+  location history + load-more + CSV/JSON export, Command Center
+  (ring/lock/Lost Mode on+off, erase with step-up + type-ERASE +
+  offline-disabled button), command list + verify panel, alerts,
+  recovery codes (step-up generate, shown once, remaining count),
+  sessions list/revoke + revoke-others, audit log, privacy view,
+  account delete. Two-click confirms, 10s arm timers, 5-min
+  online/offline rule, and loading/empty states all match.
+- Auth contract reproduced exactly: client-side PBKDF2-SHA256 600k via
+  WebCrypto, same localStorage keys (`openguard_access`,
+  `openguard_refresh`, `openguard_email`), same `/api/v1` endpoints,
+  401 → refresh → single retry. CSS is the old dashboard's stylesheet
+  verbatim except `#token-box` lost its `display:none` (React renders it
+  conditionally instead).
+- Worker change (minimal): `src/index.ts` imports
+  `../web/dist/index.html` instead of `../public/index.html`.
+  `src/html.d.ts` needed no change (wildcard `*.html`).
+  `backend/public/index.html` is now UNUSED — kept in place, not deleted.
+
+### What was built — Docker self-host
+
+- Same Hono app on Node via `backend/src/server.ts`
+  (`@hono/node-server`, port 8787 default, graceful SIGINT/SIGTERM
+  shutdown). The Worker entry never imports it.
+- **Driver switch (the key piece):** `@neondatabase/serverless` speaks
+  SQL-over-HTTP to Neon and cannot talk to a plain Postgres container,
+  so the Node path uses `postgres` (postgres.js) behind the same `db()`
+  interface: `src/lib/dbNode.ts` (imported ONLY by `server.ts`) installs
+  a postgres.js-backed `sql` via `setSqlImpl` in `src/lib/db.ts`. The
+  Worker bundle contains zero postgres.js markers (verified by grep:
+  `PostgresError`, `dbNode`, `node-server`, `setSqlImpl` all absent;
+  `setSqlImpl` is tree-shaken out). Route code is untouched.
+- The adapter normalizes three real Neon-vs-postgres.js differences so
+  route behaviour matches exactly: int8 (bigserial ids) parsed as JS
+  numbers (postgres.js returns strings), timestamps kept as raw ISO
+  strings (postgres.js returns Date objects — would have broken the CSV
+  export and the locations cursor), and `PostgresError` translated to
+  `NeonDbError` (with field-name mapping) so the 23505 catches in
+  `auth.ts` (register race → 409) and `devices.ts` (register race →
+  re-link) still fire. The three non-template bulk inserts (recovery
+  codes, locations, security events) map to `sql.unsafe` with `$1..$n`
+  params. No route uses `sql.transaction` / `.array` / `.values`.
+- `docker-compose.yml` (repo root): `api` + `db`
+  (`postgres:16-alpine`), named volume `openguard-db`, `pg_isready`
+  healthcheck with `depends_on: service_healthy`, no published DB
+  ports, localhost-only binding (`127.0.0.1:${PORT:-8787}:8787`).
+  `backend/Dockerfile` (multi-stage, `node:22-alpine`): builds the
+  React dashboard first (required — `index.ts` inlines `web/dist/`),
+  then `tsc` + `npm run build:node` (esbuild bundles `server.ts` to
+  `dist-node/server.js`; plain tsc cannot emit the `.html` import).
+  Final stage runs as `USER node`, production deps only
+  (`migrate.mjs` needs `postgres` at runtime), healthcheck on
+  `/api/v1/health`. `.env.example` has placeholders only
+  (`POSTGRES_PASSWORD`, `DATABASE_URL`, `PORT`).
+- **Migrations:** Flyway-style versioned files run by a small Node
+  script, `backend/scripts/migrate.mjs` — Flyway itself is a JVM tool
+  and this stack has no JVM. Applies `db/schema.sql` first, then
+  `db/migrations/*.sql` in filename order, one transaction per file
+  (migration + `schema_migrations` row together), skips applied
+  versions, non-zero exit on error. `.simple()` protocol allows the
+  multi-statement files including the `DO $$` block in 003.
+- Self-host run steps (also in README.md):
+  `cp .env.example .env` (set a strong `POSTGRES_PASSWORD`, same
+  password inside `DATABASE_URL`) → `docker compose up -d --build` →
+  `docker compose exec api node scripts/migrate.mjs` (first run only;
+  safe to re-run) → open http://localhost:8787. The stack listens
+  on localhost only; an HTTPS reverse proxy is the operator's choice,
+  not part of the compose file. `docker compose down -v` deletes the
+  data volume.
+
+### Verification (coordinator, independent of the workers)
+
+- `npm run build` (tsc) green in `backend/` AND `backend/web/`; Vite
+  build reproduces `dist/index.html` (248,780 bytes).
+- Worker bundle builds via the exact esbuild command: 540,634 bytes
+  (gzip 151,216); dashboard confirmed inlined; 0 postgres.js markers.
+- `npm run build:node` builds `dist-node/server.js` (770,891 bytes).
+- `docker-compose.yml` parses as YAML (services, healthcheck
+  dependency, ports, volumes confirmed). `node --check` clean on
+  `migrate.mjs`. Secrets grep over all new/changed files: clean.
+- Route files, `android/`, `db/schema.sql`, all migrations, and
+  `backend/dist/` untouched (verified by mtime).
+- **NOT verified here (no Docker daemon, no live Postgres on this
+  VM):** `docker compose up` end-to-end; migrations against a real
+  server (esp. the 003 `DO` block inside a transaction); real query
+  round-trips (prepared-statement type inference, `ANY(array)`, the
+  23505 translation path, int8/timestamp shapes against a real
+  server). The PostgresError→NeonDbError translation is code-reviewed
+  only. The Node server itself was smoke-tested live by the worker
+  (health 200, dashboard served, 404 on unknown path, 500 on DB
+  endpoint with no DB) — but that exercised the connection-error path,
+  not a server-error path.
+
+### Gaps / stubbed
+
+- Nothing stubbed in either workstream. Hilt (Android DI) and the
+  remaining phases (Vault, geofencing, analytics, public API) are
+  later rounds. `backend/public/index.html` is dead code kept in
+  place — delete it in a later cleanup push once the React dashboard
+  is proven live.
+
 ## Map + offline round (built 17 Nov 2026, not yet deployed)
 
 Fixes the user asked for after testing the Phase 2 APK: he could not

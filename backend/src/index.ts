@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import dashboardHtml from '../public/index.html'
+import dashboardHtml from '../web/dist/index.html'
 import auth from './routes/auth'
 import commands from './routes/commands'
 import devices from './routes/devices'
@@ -9,7 +9,8 @@ import type { Env } from './lib/db'
 
 const app = new Hono<{ Bindings: Env }>()
 
-// Dashboard (placeholder until the dashboard agent overwrites public/index.html)
+// Dashboard: React app built by backend/web (npm run build there first);
+// the built single file is inlined by esbuild --loader:.html=text.
 app.get('/', (c) => c.html(dashboardHtml))
 app.get('/api/v1/health', (c) => c.json({ ok: true }))
 

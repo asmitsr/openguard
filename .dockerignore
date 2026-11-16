@@ -1,0 +1,14 @@
+# Never bake secrets or local state into the image.
+.env
+.env.local
+.git
+# Backend build artefacts / local state (rebuilt inside the image).
+backend/node_modules
+backend/dist
+backend/dist-node
+backend/web/node_modules
+backend/web/dist
+backend/.wrangler
+backend/.dev.vars
+# Not needed by the API image.
+android

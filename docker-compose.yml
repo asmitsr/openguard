@@ -1,0 +1,42 @@
+# OpenGuard self-host stack: the same Hono API on Node + plain Postgres.
+# Start:   docker compose up -d --build
+# Migrate (first run): docker compose exec api node scripts/migrate.mjs
+# Then open http://localhost:8787 (the dashboard is served by the API at /).
+# The stack listens on localhost only; put a reverse proxy with HTTPS in
+# front to expose it — that is the operator's choice, not part of this file.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: openguard
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.example)}
+      POSTGRES_DB: openguard
+    volumes:
+      - openguard-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openguard -d openguard"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # No ports published: Postgres is reachable only inside this network.
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # The container always listens on 8787; PORT in .env is the HOST port.
+      PORT: "8787"
+    ports:
+      - "127.0.0.1:${PORT:-8787}:8787"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  openguard-db:

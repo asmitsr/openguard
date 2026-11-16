@@ -2,6 +2,11 @@
 node_modules/
 .wrangler/
 .dev.vars
+.env
+.env.local
+dist-node/
+backend/dist/
+backend/web/dist/
 
 # Android
 *.iml
