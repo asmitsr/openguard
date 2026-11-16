@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import type { Context } from 'hono'
 import { db, type Env } from '../lib/db'
 import { authenticateDevice, authenticateUser, newToken, ownsDevice, verifyStepUpToken } from '../lib/auth'
 import { audit } from '../lib/audit'
@@ -17,6 +18,8 @@ const EVENT_TYPES = [
   'location_disabled',
   'low_battery',
   'sync_gap',
+  'sms_command',
+  'chaos_started',
 ] as const
 
 function isAction(v: unknown): v is Action {
@@ -131,6 +134,11 @@ app.post('/devices/:id/commands', async (c) => {
     action,
     command_id: cmd.id,
   })
+  // Instant push: wake the device's ntfy topic so it fetches the command
+  // in seconds instead of waiting for the 15-minute poll. The push
+  // carries only a random opaque id — never the command, never a
+  // location. Fire-and-forget: the response never waits for ntfy.
+  publishWakeUp(c, deviceId)
   return c.json(publicCommand(cmd), 201, { 'Cache-Control': 'no-store' })
 })
 
@@ -309,5 +317,34 @@ app.get('/devices/:id/security-events', async (c) => {
     WHERE device_id = ${deviceId} ORDER BY created_at DESC LIMIT ${limit}`
   return c.json({ events: rows })
 })
+
+// Publishes one wake-up to the device's ntfy topic (public ntfy.sh).
+// Fire-and-forget: the fetch starts at once, then waitUntil keeps the
+// Worker alive for it without blocking the response. Where waitUntil is
+// unavailable (Node self-host) the fetch still runs unawaited. A failed
+// publish is silent — the device's 15-minute poll is the fallback — and
+// a device with no registered topic is simply skipped.
+function publishWakeUp(c: Context<any>, deviceId: string): void {
+  const run = (async () => {
+    const rows = await db(c.env)`SELECT push_topic FROM devices WHERE id = ${deviceId}`
+    const topic = (rows[0] as { push_topic: string | null } | undefined)?.push_topic
+    if (!topic) return
+    await fetch(`https://ntfy.sh/${encodeURIComponent(topic)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: `wake:${crypto.randomUUID()}`,
+    })
+  })().catch(() => undefined)
+  const ctx = (
+    c as unknown as { executionCtx?: { waitUntil(p: Promise<unknown>): void } }
+  ).executionCtx
+  if (ctx) {
+    try {
+      ctx.waitUntil(run)
+    } catch {
+      // waitUntil unavailable after all: the fetch already started.
+    }
+  }
+}
 
 export default app

@@ -120,12 +120,41 @@ app.post('/:id/sign-out', async (c) => {
   if (!auth) return err(c, 401, 'unauthorized')
   const deviceId = c.req.param('id')
   const rows = await db(c.env)`
-    UPDATE devices SET token_hash = ${await sha256Hex(newToken())}
+    UPDATE devices SET token_hash = ${await sha256Hex(newToken())}, push_topic = NULL
     WHERE id = ${deviceId} AND user_id = ${auth.user.id} RETURNING id`
   if (!rows.length) return err(c, 404, 'device not found')
   await db(c.env)`
     DELETE FROM sessions WHERE user_id = ${auth.user.id} AND id != ${auth.sessionId}`
   await audit(c.env, auth.user.id, 'device_sign_out', deviceId)
+  return c.body(null, 204)
+})
+
+// Registers or rotates a device's push (ntfy) topic. Device token: the
+// device generates its own random unguessable topic and tells the server
+// where to publish wake-ups. The topic is never returned by any endpoint.
+app.post('/:id/push-topic', async (c) => {
+  const device = await authenticateDevice(c, c.req.param('id'))
+  if (!device) return err(c, 401, 'unauthorized')
+  const body = await jsonBody<{ push_topic?: unknown }>(c)
+  const topic = body?.push_topic
+  if (
+    typeof topic !== 'string' ||
+    topic.length < 16 ||
+    topic.length > 128 ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(topic)
+  ) {
+    return err(c, 400, 'push_topic must be 16-128 chars: letters, digits, dot, dash, underscore')
+  }
+  try {
+    await db(c.env)`UPDATE devices SET push_topic = ${topic} WHERE id = ${device.id}`
+  } catch (e) {
+    // Topic already held by another device row (stale row after a
+    // failed sign-out): the client rotates and retries once.
+    if (e instanceof NeonDbError && e.code === '23505') {
+      return err(c, 409, 'push_topic already in use — rotate and retry')
+    }
+    throw e
+  }
   return c.body(null, 204)
 })
 

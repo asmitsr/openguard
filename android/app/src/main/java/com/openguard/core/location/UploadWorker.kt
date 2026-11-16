@@ -1,10 +1,6 @@
 package com.openguard.core.location
 
 import android.content.Context
-import android.location.LocationManager
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
-import android.os.BatteryManager
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
@@ -18,14 +14,10 @@ import com.google.gson.JsonParser
 import com.openguard.OpenGuardApp
 import com.openguard.core.common.SecurityConfig
 import com.openguard.core.common.TrackingConfig
-import com.openguard.core.database.LocationEntity
 import com.openguard.core.database.SecurityEventEntity
 import com.openguard.core.network.AckCommandRequest
-import com.openguard.core.network.HeartbeatRequest
-import com.openguard.core.network.LocationPointDto
 import com.openguard.core.network.SecurityEventRequest
 import com.openguard.core.network.SecurityEventsUploadRequest
-import com.openguard.core.network.UploadLocationsRequest
 import com.openguard.core.security.CommandExecutor
 import com.openguard.core.security.DecoyLock
 import com.openguard.core.security.LostModeStore
@@ -60,23 +52,19 @@ class UploadWorker(appContext: Context, params: WorkerParameters) :
         val auth = "Bearer $deviceToken"
         var contactedServer = false
         return try {
+            // Best-effort: (re-)register the push topic so commands can
+            // wake this phone in seconds. Never fails the worker.
+            runCatching { NtfyClient.ensureRegistered(app) }
             runDetectionChecks(app)
-            val dao = app.database.locationDao()
-            val batch = dao.oldest(TrackingConfig.UPLOAD_BATCH_SIZE)
-            if (batch.isNotEmpty()) {
-                val response = app.api.uploadLocations(
-                    auth, deviceId, UploadLocationsRequest(batch.map { it.toDto() }),
-                )
-                if (!response.isSuccessful) {
-                    // 429 / 5xx: retry later. Anything else: fail, keep the rows.
-                    return if (response.code() == 429 || response.code() >= 500) {
-                        Result.retry()
-                    } else {
-                        Result.failure()
-                    }
-                }
-                contactedServer = true
-                dao.deleteByIds(batch.map { it.id })
+            // Locations upload through the shared direct path (same
+            // data-loss rule: rows are deleted only on server confirm).
+            // The foreground service usually flushes them within seconds;
+            // this run is the offline-retry/backfill for whatever is left.
+            when (LiveUploader.flushOutbox(app)) {
+                LiveUploader.FlushOutcome.RETRYABLE -> return Result.retry()
+                LiveUploader.FlushOutcome.FAILED -> return Result.failure()
+                LiveUploader.FlushOutcome.UPLOADED -> contactedServer = true
+                LiveUploader.FlushOutcome.EMPTY -> { /* nothing queued */ }
             }
             // Security events, same data-loss rule as locations.
             val eventDao = app.database.securityEventDao()
@@ -97,11 +85,7 @@ class UploadWorker(appContext: Context, params: WorkerParameters) :
             }
             // Heartbeat after every pass, even with an empty queue, so
             // last-seen / battery stay fresh on the dashboard.
-            heartbeatBody(applicationContext)?.let { body ->
-                if (app.api.heartbeat(auth, deviceId, body).isSuccessful) {
-                    contactedServer = true
-                }
-            }
+            if (LiveUploader.sendHeartbeat(app)) contactedServer = true
             // Pending remote commands (oldest first): execute, then ack.
             // A failed ack is not fatal — replay protection in
             // CommandExecutor keeps a redelivery from re-running.
@@ -146,14 +130,14 @@ class UploadWorker(appContext: Context, params: WorkerParameters) :
         }
         SecurityPrefs.setLastLocationPermissionGranted(context, permissionNow)
         // Location providers enabled -> disabled.
-        val enabledNow = locationProvidersEnabled(context)
+        val enabledNow = LiveUploader.locationProvidersEnabled(context)
         val enabledLast = SecurityPrefs.lastLocationEnabled(context)
         if (enabledLast == true && !enabledNow) {
             SecurityEvents.record(db, "location_disabled", confirmed = true)
         }
         SecurityPrefs.setLastLocationEnabled(context, enabledNow)
         // Low battery (<=15%, not charging), at most once per 24h.
-        batteryInfo(context)?.let { (level, charging) ->
+        LiveUploader.batteryInfo(context)?.let { (level, charging) ->
             if (level <= SecurityConfig.LOW_BATTERY_THRESHOLD && !charging) {
                 val now = System.currentTimeMillis()
                 if (now - SecurityPrefs.lastLowBatteryEventAt(context) >
@@ -214,62 +198,8 @@ class UploadWorker(appContext: Context, params: WorkerParameters) :
         private fun networkConstraint(): Constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
-
-        /** (level 0-100, charging) or null when the level is unknown. */
-        private fun batteryInfo(context: Context): Pair<Int, Boolean>? {
-            val battery = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
-            val level = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-            if (level < 0 || level > 100) return null
-            val status = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_STATUS)
-            val charging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
-                status == BatteryManager.BATTERY_STATUS_FULL
-            return level to charging
-        }
-
-        /** Null when the battery level is unknown — heartbeat needs 0-100. */
-        private fun heartbeatBody(context: Context): HeartbeatRequest? {
-            val (level, charging) = batteryInfo(context) ?: return null
-            val permission = when {
-                TrackingPermissions.hasFineLocation(context) &&
-                    TrackingPermissions.hasBackgroundLocation(context) -> "all"
-                TrackingPermissions.hasFineLocation(context) -> "foreground"
-                else -> "none"
-            }
-            return HeartbeatRequest(
-                batteryLevel = level,
-                batteryCharging = charging,
-                networkType = networkType(context),
-                locationPermission = permission,
-                locationEnabled = locationProvidersEnabled(context),
-            )
-        }
-
-        private fun locationProvidersEnabled(context: Context): Boolean {
-            val manager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-            return manager.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
-                manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
-        }
-
-        private fun networkType(context: Context): String? {
-            val manager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            val caps = manager.getNetworkCapabilities(manager.activeNetwork) ?: return null
-            return when {
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
-                else -> "other"
-            }
-        }
     }
 }
-
-private fun LocationEntity.toDto(): LocationPointDto = LocationPointDto(
-    latitude = latitude,
-    longitude = longitude,
-    accuracy = accuracy,
-    recordedAt = recordedAt,
-    provider = provider,
-)
 
 private fun SecurityEventEntity.toUploadItem(): SecurityEventRequest = SecurityEventRequest(
     eventType = eventType,

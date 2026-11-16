@@ -3,6 +3,8 @@ package com.openguard.core.security
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKeys
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -11,10 +13,21 @@ import kotlinx.coroutines.flow.asStateFlow
  * Plain (unencrypted) SharedPreferences for Phase 2 security state.
  * Nothing here is a secret: last-known permission/provider state,
  * timestamps, executed command ids, SIM ids, and Lost Mode state.
- * Tokens still live in TokenStore's encrypted prefs.
+ * Tokens still live in TokenStore's encrypted prefs, and the trusted
+ * number (a user secret) lives in the encrypted prefs below.
  */
 private fun securityPrefs(context: Context): SharedPreferences =
     context.getSharedPreferences("openguard_security", Context.MODE_PRIVATE)
+
+/** Encrypted prefs for the trusted number only (same pattern as TokenStore). */
+private fun secretPrefs(context: Context): SharedPreferences =
+    EncryptedSharedPreferences.create(
+        "openguard_secrets",
+        MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC),
+        context.applicationContext,
+        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+    )
 
 object SecurityPrefs {
 
@@ -112,6 +125,53 @@ object SecurityPrefs {
         securityPrefs(context).edit { putBoolean(KEY_POWER_MENU_GUARD_ENABLED, enabled) }
     }
 
+    // Live tracking (fast updates): owner-enabled; Lost Mode also turns
+    // live mode on automatically (see LiveUploader.isLiveMode).
+    fun isLiveTrackingEnabled(context: Context): Boolean =
+        securityPrefs(context).getBoolean(KEY_LIVE_TRACKING_ENABLED, false)
+
+    fun setLiveTrackingEnabled(context: Context, enabled: Boolean) {
+        securityPrefs(context).edit { putBoolean(KEY_LIVE_TRACKING_ENABLED, enabled) }
+    }
+
+    // Trusted number for theft response (auto-call + the SMS location
+    // replies). A user secret: encrypted prefs, device-only, never
+    // uploaded, never logged. Null = not set. The SMS handler reads it
+    // by this exact accessor. The read is defensive: before the first
+    // unlock after a reboot the Keystore is unavailable, so a failed
+    // read returns null (theft response simply waits) instead of
+    // crashing; the write runs from Settings on an unlocked phone.
+    fun trustedNumber(context: Context): String? = try {
+        secretPrefs(context).getString(KEY_TRUSTED_NUMBER, null)
+    } catch (e: Exception) {
+        null
+    }
+
+    fun setTrustedNumber(context: Context, number: String?) {
+        secretPrefs(context).edit {
+            if (number.isNullOrBlank()) remove(KEY_TRUSTED_NUMBER)
+            else putString(KEY_TRUSTED_NUMBER, number.trim())
+        }
+    }
+
+    // Auto-call during Lost Mode: off by default, the owner opts in.
+    fun isAutoCallEnabled(context: Context): Boolean =
+        securityPrefs(context).getBoolean(KEY_AUTO_CALL_ENABLED, false)
+
+    fun setAutoCallEnabled(context: Context, enabled: Boolean) {
+        securityPrefs(context).edit { putBoolean(KEY_AUTO_CALL_ENABLED, enabled) }
+    }
+
+    // Chaos mode (SIM removed during Lost Mode): set by SimMonitor, read
+    // by the tracking service's theft-response supervisor, cleared when
+    // Lost Mode turns off. Persisted so it survives a process death.
+    fun isChaosModeActive(context: Context): Boolean =
+        securityPrefs(context).getBoolean(KEY_CHAOS_MODE_ACTIVE, false)
+
+    fun setChaosModeActive(context: Context, active: Boolean) {
+        securityPrefs(context).edit { putBoolean(KEY_CHAOS_MODE_ACTIVE, active) }
+    }
+
     private const val KEY_LOCATION_PERMISSION_GRANTED = "last_location_permission_granted"
     private const val KEY_LOCATION_ENABLED = "last_location_enabled"
     private const val KEY_LAST_LOW_BATTERY_EVENT_AT = "last_low_battery_event_at"
@@ -122,6 +182,10 @@ object SecurityPrefs {
     private const val KEY_LAST_SEEN_SUBSCRIPTION_IDS = "last_seen_subscription_ids"
     private const val KEY_TRUSTED_SUBSCRIPTION_IDS = "trusted_subscription_ids"
     private const val KEY_POWER_MENU_GUARD_ENABLED = "power_menu_guard_enabled"
+    private const val KEY_LIVE_TRACKING_ENABLED = "live_tracking_enabled"
+    private const val KEY_TRUSTED_NUMBER = "trusted_number"
+    private const val KEY_AUTO_CALL_ENABLED = "auto_call_enabled"
+    private const val KEY_CHAOS_MODE_ACTIVE = "chaos_mode_active"
 }
 
 /**

@@ -33,6 +33,7 @@ import com.openguard.core.database.LocationEntity
 import com.openguard.core.security.DecoyLock
 import com.openguard.core.security.LostModeStore
 import com.openguard.core.security.SecurityEvents
+import com.openguard.core.theft.TheftResponse
 import java.time.Instant
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +43,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 /** Process-local tracking state, observed by the UI. */
@@ -55,7 +57,11 @@ object TrackingState {
 
 /**
  * Foreground service that records this device's location into the Room
- * outbox queue. Uploads happen separately via UploadWorker.
+ * outbox queue and uploads it directly (LiveUploader) seconds after each
+ * fix; UploadWorker remains the offline-retry backfill. While tracking
+ * runs it also listens for instant-push wake-ups (NtfyClient) so remote
+ * commands arrive in seconds, and hosts the theft response
+ * (TheftResponse: wake counter + auto-call, chaos mode).
  *
  * CONSENT: the service only ever runs after the user completes the consent
  * screen, and a persistent notification ("OpenGuard is tracking this
@@ -71,6 +77,8 @@ class LocationService : Service() {
     // startTracking runs on every start intent; the watchdog must be
     // launched only once per service instance.
     private var watchdogStarted = false
+    private var ntfyClient: NtfyClient? = null
+    private var liveModeWatcherStarted = false
 
     // Connectivity-triggered command fetch: when the network comes back,
     // poll for pending commands right away instead of waiting up to 15
@@ -101,7 +109,14 @@ class LocationService : Service() {
                 for (location in result.locations) {
                     database.locationDao().insert(location.toEntity())
                 }
-                // Try an upload soon; the periodic worker is the backstop.
+                // Fast path: upload directly instead of waiting up to 15
+                // minutes for the periodic worker. The outbox + worker
+                // remain the backstop when this fails.
+                val app = applicationContext as OpenGuardApp
+                LiveUploader.flushOutbox(app)
+                if (LiveUploader.isLiveMode(applicationContext)) {
+                    LiveUploader.sendHeartbeat(app)
+                }
                 UploadWorker.enqueueOneTime(applicationContext)
             }
         }
@@ -133,12 +148,17 @@ class LocationService : Service() {
 
     override fun onDestroy() {
         fused.removeLocationUpdates(locationCallback)
+        ntfyClient?.stop()
+        ntfyClient = null
         try {
             connectivityManager?.unregisterNetworkCallback(networkCallback)
         } catch (e: IllegalArgumentException) {
             // Callback was never registered; nothing to unregister.
         }
         connectivityManager = null
+        // Stop the theft response first: unregisters the screen-on
+        // receiver and stops any chaos alarm before the scope dies.
+        TheftResponse.stop(applicationContext)
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         TrackingState.set(false)
         scope.cancel()
@@ -163,19 +183,31 @@ class LocationService : Service() {
             stopSelf()
             return
         }
-        val request = LocationRequest.Builder(
-            Priority.PRIORITY_HIGH_ACCURACY,
-            TrackingConfig.LOCATION_INTERVAL_MS,
-        )
-            .setMinUpdateIntervalMillis(TrackingConfig.LOCATION_MIN_INTERVAL_MS)
-            .setMinUpdateDistanceMeters(TrackingConfig.LOCATION_MIN_DISTANCE_M)
-            .build()
-        try {
-            fused.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
-            TrackingState.set(true)
-        } catch (e: SecurityException) {
-            stopSelf()
-            return
+        if (!requestLocationUpdates()) return
+        // Instant push: register this device's ntfy topic, then listen
+        // for wake-ups (commands arrive in seconds; the 15-minute poll
+        // stays as the fallback). Runs in the service scope: stops with it.
+        if (ntfyClient == null) {
+            ntfyClient = NtfyClient(scope) { UploadWorker.enqueueOneTime(applicationContext) }
+            scope.launch {
+                NtfyClient.ensureRegistered(application as OpenGuardApp)
+                ntfyClient?.start(applicationContext)
+            }
+        }
+        // Live-mode watcher: Lost Mode turns live tracking on by itself.
+        // Re-request location updates at the new interval when it flips.
+        if (!liveModeWatcherStarted) {
+            liveModeWatcherStarted = true
+            scope.launch {
+                var lastLive = LiveUploader.isLiveMode(applicationContext)
+                LostModeStore.isOnFlow.collect {
+                    val live = LiveUploader.isLiveMode(applicationContext)
+                    if (live != lastLive) {
+                        lastLive = live
+                        requestLocationUpdates()
+                    }
+                }
+            }
         }
         // Decoy watchdog: while tracking runs, re-show the Lost Mode
         // decoy overlay if it was dismissed (e.g. the process restarted
@@ -191,6 +223,36 @@ class LocationService : Service() {
                     delay(SecurityConfig.DECOY_WATCHDOG_INTERVAL_MS)
                 }
             }
+        }
+        // Theft response (wake counter + auto-call, chaos mode): hosted
+        // by this service because ACTION_SCREEN_ON can only be received
+        // by a dynamically registered receiver, and the chaos timer must
+        // outlive any worker run. start() is idempotent; the supervisor
+        // inside gates everything on Lost Mode being on.
+        TheftResponse.start(applicationContext, scope)
+    }
+
+    /**
+     * Requests location updates at the current interval (20s in live
+     * mode, 60s otherwise). Re-requesting for the same callback replaces
+     * the previous request. False when the permission is gone (the
+     * service is stopping).
+     */
+    private fun requestLocationUpdates(): Boolean {
+        val request = LocationRequest.Builder(
+            Priority.PRIORITY_HIGH_ACCURACY,
+            LiveUploader.locationIntervalMs(this),
+        )
+            .setMinUpdateIntervalMillis(LiveUploader.locationMinIntervalMs(this))
+            .setMinUpdateDistanceMeters(TrackingConfig.LOCATION_MIN_DISTANCE_M)
+            .build()
+        return try {
+            fused.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
+            TrackingState.set(true)
+            true
+        } catch (e: SecurityException) {
+            stopSelf()
+            false
         }
     }
 
@@ -245,7 +307,14 @@ class LocationService : Service() {
         const val ACTION_START = "com.openguard.action.START_TRACKING"
         const val ACTION_STOP = "com.openguard.action.STOP_TRACKING"
 
-        /** Start from a foreground context only (button tap in the app). */
+        /**
+         * Start from a foreground context (button tap in the app), or
+         * from Lost Mode / boot (LostMode.turnOn, BootReceiver) under
+         * the SYSTEM_ALERT_WINDOW / BOOT_COMPLETED background-start
+         * exemptions. Background callers MUST wrap this in try/catch
+         * (IllegalStateException + SecurityException): the start can
+         * still be denied, e.g. when background location was revoked.
+         */
         fun start(context: Context) {
             ContextCompat.startForegroundService(
                 context,

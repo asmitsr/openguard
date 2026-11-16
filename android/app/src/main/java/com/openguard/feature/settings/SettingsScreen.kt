@@ -1,8 +1,12 @@
 package com.openguard.feature.settings
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -39,16 +43,23 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.openguard.R
+import com.openguard.core.location.LocationService
+import com.openguard.core.location.PushTopicStore
 import com.openguard.core.location.TrackingPermissions
+import com.openguard.core.location.TrackingState
 import com.openguard.core.location.WifiReconnect
 import com.openguard.core.security.DecoyLock
 import com.openguard.core.security.DeviceAdminManager
 import com.openguard.core.security.PowerMenuGuard
 import com.openguard.core.security.SecurityPrefs
 import com.openguard.core.security.SimMonitor
+import com.openguard.core.security.SmsSecretStore
+import com.openguard.core.theft.AutoCaller
 import com.openguard.ui.ErrorText
 import com.openguard.ui.GuardOutlinedButton
 import com.openguard.ui.GuardTopBar
@@ -95,6 +106,32 @@ fun SettingsScreen(
     val overlayAllowed = remember(tick) { DecoyLock.hasPermission(context) }
     val guardServiceOn = remember(tick) { PowerMenuGuard.isServiceEnabled(context) }
     var guardEnabled by remember(tick) { mutableStateOf(PowerMenuGuard.isGuardEnabled(context)) }
+    var trustedNumberText by remember {
+        mutableStateOf(SecurityPrefs.trustedNumber(context) ?: "")
+    }
+    var numberSaved by remember { mutableStateOf<String?>(null) }
+    var autoCallEnabled by remember(tick) {
+        mutableStateOf(SecurityPrefs.isAutoCallEnabled(context))
+    }
+    var callAsked by remember { mutableStateOf(false) }
+    val callPermissionGranted = remember(tick) { AutoCaller.hasCallPermission(context) }
+    val callLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { tick++ }
+    var liveTracking by remember(tick) { mutableStateOf(SecurityPrefs.isLiveTrackingEnabled(context)) }
+    var smsSecret by remember { mutableStateOf("") }
+    var smsSecretResult by remember { mutableStateOf<String?>(null) }
+    var pushRotateResult by remember { mutableStateOf<String?>(null) }
+    val smsPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { tick++ }
+    val hasSms = remember(tick) {
+        ContextCompat.checkSelfPermission(context, Manifest.permission.RECEIVE_SMS) ==
+            PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.SEND_SMS) ==
+                PackageManager.PERMISSION_GRANTED
+    }
+    val hasSmsSecret = remember(tick) { SmsSecretStore.hasSecret(context) }
 
     Scaffold(
         topBar = { GuardTopBar(title = "Settings", onBack = onBack) },
@@ -316,6 +353,137 @@ fun SettingsScreen(
             )
 
             Spacer(Modifier.height(24.dp))
+            SectionHeader(iconRes = R.drawable.ic_bell, title = "Theft response")
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "While Lost Mode is on, OpenGuard can call a number you " +
+                    "trust and, if the SIM is removed, keep the phone " +
+                    "noisy and unusable. Nothing here runs while Lost " +
+                    "Mode is off. The number stays on this phone only " +
+                    "— it is never sent to the server — and it is also " +
+                    "the number SMS location replies go to.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = trustedNumberText,
+                onValueChange = { trustedNumberText = it; numberSaved = null },
+                label = { Text("Trusted number") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                singleLine = true,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (trustedNumberText.isNotBlank() &&
+                !AutoCaller.isPlausiblePhoneNumber(trustedNumberText)
+            ) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "That does not look like a phone number — check it, " +
+                        "or leave it and save anyway.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            GuardOutlinedButton(
+                onClick = {
+                    SecurityPrefs.setTrustedNumber(
+                        context,
+                        trustedNumberText.trim().ifBlank { null },
+                    )
+                    numberSaved = if (trustedNumberText.isBlank()) {
+                        "Trusted number cleared."
+                    } else {
+                        "Trusted number saved."
+                    }
+                    tick++
+                },
+                text = "Save trusted number",
+                iconRes = R.drawable.ic_check,
+            )
+            numberSaved?.let { saved ->
+                Spacer(Modifier.height(8.dp))
+                Text(saved, style = MaterialTheme.typography.bodyMedium)
+            }
+            Spacer(Modifier.height(16.dp))
+            Text(
+                "Auto-call: after the screen is woken 3 times during " +
+                    "Lost Mode, OpenGuard calls the trusted number, " +
+                    "then redials every minute up to 5 times. A thief " +
+                    "can end a call — the redial loop is the defense. " +
+                    "It needs the SIM, signal and credit; if the SIM " +
+                    "is removed, chaos mode takes over instead.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Auto-call trusted number during Lost Mode",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(
+                    checked = autoCallEnabled,
+                    onCheckedChange = {
+                        autoCallEnabled = it
+                        SecurityPrefs.setAutoCallEnabled(context, it)
+                    },
+                    enabled = callPermissionGranted &&
+                        SecurityPrefs.trustedNumber(context) != null,
+                )
+            }
+            if (!callPermissionGranted) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Calling needs the phone permission. Grant it to " +
+                        "turn auto-call on.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(12.dp))
+                if (callAsked && activity?.let {
+                        !ActivityCompat.shouldShowRequestPermissionRationale(
+                            it, Manifest.permission.CALL_PHONE,
+                        )
+                    } == true
+                ) {
+                    GuardOutlinedButton(
+                        onClick = { TrackingPermissions.openAppSettings(context) },
+                        text = "Open app settings",
+                        iconRes = R.drawable.ic_settings,
+                    )
+                } else {
+                    GuardOutlinedButton(
+                        onClick = {
+                            callAsked = true
+                            callLauncher.launch(Manifest.permission.CALL_PHONE)
+                        },
+                        text = "Grant phone permission",
+                        iconRes = R.drawable.ic_bell,
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Chaos mode: if the SIM is removed during Lost Mode, " +
+                    "the camera app, YouTube and other apps open one " +
+                    "after another behind the decoy lock while the " +
+                    "alarm loops at full volume. It stops only when " +
+                    "Lost Mode is turned off. The camera app only " +
+                    "opens — it never takes a picture by itself. " +
+                    "Limit: the overlay sits below the status bar, " +
+                    "and holding power about 10 seconds still " +
+                    "force-restarts the phone; Lost Mode comes back " +
+                    "after the reboot.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Spacer(Modifier.height(24.dp))
             SectionHeader(iconRes = R.drawable.ic_radar, title = "WiFi reconnect")
             Spacer(Modifier.height(8.dp))
             Text(
@@ -392,6 +560,126 @@ fun SettingsScreen(
                     onClick = { WifiReconnect.openWifiPanel(context) },
                     text = "Open WiFi settings",
                 )
+            }
+
+            Spacer(Modifier.height(24.dp))
+            SectionHeader(iconRes = R.drawable.ic_radar, title = "Live tracking")
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Uploads this phone's location every 20 seconds instead of " +
+                    "every 15 minutes, so the map and device list stay fresh. " +
+                    "Uses more battery and mobile data — turn it off when you " +
+                    "don't need it. Live tracking also turns on automatically " +
+                    "while Lost Mode is on.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Live tracking",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(
+                    checked = liveTracking,
+                    onCheckedChange = {
+                        liveTracking = it
+                        SecurityPrefs.setLiveTrackingEnabled(context, it)
+                        if (TrackingState.isTracking.value) {
+                            LocationService.stop(context)
+                            LocationService.start(context)
+                        }
+                    },
+                )
+            }
+
+            Spacer(Modifier.height(24.dp))
+            SectionHeader(iconRes = R.drawable.ic_shield_check, title = "Instant push")
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "While tracking is on, OpenGuard keeps a direct connection " +
+                    "to ntfy.sh so Ring, Lock and Lost Mode reach this phone " +
+                    "in seconds instead of up to 15 minutes. The push carries " +
+                    "only a random wake-up code — never your location or the " +
+                    "command itself. If ntfy.sh is unreachable, commands still " +
+                    "arrive on the next 15-minute check.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(12.dp))
+            GuardOutlinedButton(
+                onClick = {
+                    PushTopicStore.rotate(context)
+                    pushRotateResult = "Push topic rotated. It takes effect when tracking restarts."
+                    tick++
+                },
+                text = "Rotate push topic",
+            )
+            pushRotateResult?.let { result ->
+                Spacer(Modifier.height(8.dp))
+                Text(result, style = MaterialTheme.typography.bodyMedium)
+            }
+
+            Spacer(Modifier.height(24.dp))
+            SectionHeader(iconRes = R.drawable.ic_smartphone, title = "SMS commands")
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Control this phone by text message when it has no internet. " +
+                    "Set a secret code below, then text \"<code> RING\", " +
+                    "\"<code> LOCATE\", \"<code> LOCK\" or \"<code> WIPE\" from any " +
+                    "phone. Replies go to your trusted number. SMS cost falls " +
+                    "on the app user via their own SIM. This needs the SMS " +
+                    "permission, and only works in the sideloaded APK — not " +
+                    "in a Play Store release.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                if (hasSmsSecret) "A secret code is set." else "No secret code set — SMS commands are off.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (!hasSms) {
+                Spacer(Modifier.height(12.dp))
+                GuardOutlinedButton(
+                    onClick = {
+                        smsPermissionLauncher.launch(
+                            arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.SEND_SMS),
+                        )
+                    },
+                    text = "Grant SMS permission",
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = smsSecret,
+                onValueChange = { smsSecret = it },
+                label = { Text("Secret code") },
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                singleLine = true,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(12.dp))
+            GuardOutlinedButton(
+                onClick = {
+                    SmsSecretStore.setSecret(context, smsSecret.ifBlank { null })
+                    smsSecretResult = if (smsSecret.isBlank()) {
+                        "Secret code cleared — SMS commands are off."
+                    } else {
+                        "Secret code saved."
+                    }
+                    smsSecret = ""
+                    tick++
+                },
+                text = "Save secret code",
+            )
+            smsSecretResult?.let { result ->
+                Spacer(Modifier.height(8.dp))
+                Text(result, style = MaterialTheme.typography.bodyMedium)
             }
 
             Spacer(Modifier.height(24.dp))

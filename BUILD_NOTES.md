@@ -845,3 +845,111 @@ for "DEL" (one string change in DecoyLock.kt).
 
 Deploy: push the 17 Android files (list in the round report) + this
 file; CI builds the APK. No DB or Worker step.
+
+## Fast + Theft Response round (17 Nov 2026)
+
+Live uploads, instant push (ntfy), SMS commands, auto-call, SIM-removal
+chaos mode. 23 files + migration 005 + dashboard label follow-up.
+
+- Live upload (`core/location/LiveUploader.kt`): one upload
+  implementation — LocationService flushes the outbox directly after
+  every fix; the periodic worker is the offline-retry/backfill. Live
+  tracking mode (Settings toggle, or auto-on in Lost Mode): fixes every
+  20s (min 15s) + direct heartbeat; normal mode keeps 60s fixes.
+  Server rate limit is 120 req/min/device; live mode uses ~3/min.
+- Device list: silent poll every 25s while open + pull-to-refresh
+  (PullToRefreshBox, stable in pinned material3 1.3.0).
+- Instant push — embedded ntfy client, NOT UnifiedPush (UP would force
+  a second app install). NtfyClient holds one long-lived GET to
+  https://ntfy.sh/{topic}/json (plain OkHttp, infinite read timeout,
+  dedicated client with NO auth interceptor — no OpenGuard credential
+  ever goes to ntfy.sh); any message line is just a wake-up triggering
+  the existing one-time worker fetch (nonce/expiry/replay unchanged).
+  Reconnect with exponential backoff (5s -> 60s cap). Server:
+  publishWakeUp() in commands.ts runs after command insert + audit —
+  one fetch POST to ntfy.sh/{topic} with body `wake:<random UUID>`
+  (opaque id only, never command/location), via
+  c.executionCtx.waitUntil() when available; failures silent; no
+  publish on idempotent replay. Topic: device generates `og-` + 128
+  random bits hex, EncryptedSharedPreferences, registered once via POST
+  /devices/:id/push-topic (device-token auth, 409 on collision ->
+  rotate + retry once), stored in devices.push_topic, never returned
+  by any endpoint; Settings "Rotate push topic"; sign-out clears it.
+  If ntfy.sh is unreachable, the 15-min poll remains the fallback —
+  commands are never lost, only slower. Push runs only while tracking
+  is on.
+- SMS commands (own implementation, zero FMD code — GPL-3.0): format
+  `<secret> RING | LOCATE | LOCK | WIPE` (secret case-sensitive,
+  constant-time compare). SMS_RECEIVED_ACTION (not SMS_DELIVER — not
+  the default SMS app). RING -> RingService; LOCATE -> reply with last
+  known location + Maps link; LOCK -> lockNow(); WIPE -> EraseCountdown
+  (same 60s abortable countdown, never instant). Secret in
+  EncryptedSharedPreferences, never logged. Wrong-secret texts ignored
+  silently; accepted ones recorded as sms_command security events.
+  Replies go ONLY to the trusted number, never the sender, max one
+  reply per minute. Works with no internet. RECEIVE_SMS/SEND_SMS are
+  sideload-only; SMS cost falls on the app user via their own SIM.
+- Theft response (ALL gated on Lost Mode being on; host is
+  LocationService — ACTION_SCREEN_ON needs a dynamic receiver and the
+  chaos timer must outlive any worker). LostMode.turnOn starts
+  LocationService; BootReceiver restarts it after reboot. A 15s
+  supervisor stops everything the moment Lost Mode is off.
+- Trusted number: one owner-configured number in Settings (loose
+  validation, warning only). Used only on-device (ACTION_CALL + SMS
+  replies), never sent to the server, never logged. Stored in
+  EncryptedSharedPreferences (openguard_secrets file).
+- Wake counter + auto-call: 3 screen wakes start one burst; max 5
+  dials per burst; first dial immediately, then one redial every 60s;
+  after a burst the counter resets — the next burst needs 3 fresh
+  wakes. A dial is skipped (not counted) while a call is already
+  active; a failed dial counts. Every dial re-checks Lost Mode.
+  Plain ACTION_CALL intent (tel: + sanitized digits/leading +).
+  CALL_PHONE requested in Settings (existing consent pattern).
+- Chaos mode (SIM removed during Lost Mode): trigger — worker path
+  (SimMonitor: current empty + lastSeen non-empty + Lost Mode on) and
+  broadcast fast path (SimChangeReceiver re-checks real SIM state
+  first — a spoofed broadcast alone can never arm it). A SIM *swap*
+  does not trigger it; a phone that never had a SIM never triggers.
+  One tick every 10s: decoy overlay re-shown if gone; alarm + media
+  volumes forced back to max; RingService.start() (re-arms within one
+  tick after its 2-min auto-stop); one app launch per tick cycling
+  camera (ACTION_IMAGE_CAPTURE) -> YouTube -> Maps -> Chrome -> Photos
+  -> repeat. All launches open BEHIND the decoy overlay. Everything
+  stops ONLY on owner exit (turnOff clears the flag + silences the
+  ring; the loop's finally restores the pre-chaos media volume). No
+  hidden capture: the camera app opens visibly and never takes a
+  picture by itself. (With device admin active, Lost Mode disables
+  the camera, so the camera app opens to its disabled notice instead
+  — still disruptive, flashlight stays blocked.) Manifest gains a
+  <queries> block for the four packages (Android 11+ visibility).
+- Migration 005_push.sql (idempotent): devices.push_topic + partial
+  unique index; re-creates the security_events event-type CHECK adding
+  sms_command + chaos_started. The old CHECK is dropped by definition
+  (any CHECK on security_events mentioning event_type), not by assumed
+  name. NOTE (real bug caught in review): the server's bulk-upload
+  handler rejects the WHOLE batch with 400 on any unknown event type,
+  and the worker treats 4xx as permanent — so the new types had to be
+  added to EVENT_TYPES in commands.ts AND the CHECK, or one
+  chaos_started event would have blocked ALL security-event uploads.
+- Dashboard: AlertsPanel EVENT_LABELS gained friendly labels for
+  sms_command + chaos_started.
+
+Honest limits: push works only while tracking is on; if ntfy.sh is
+unreachable, commands fall back to the 15-min poll. Auto-call: the
+thief CAN end a call (e.g. from the shade) — the defense is the redial
+loop; needs SIM + signal + credit; with the SIM removed, chaos mode
+takes over. Chaos mode: overlay below the status bar; hardware volume
+keys still work (re-maxed every 10s); ~10s power hold still
+force-reboots (boot receiver re-locks + restarts the service; chaos
+resumes from the persisted flag). Theft response needs the tracking
+service alive: if the owner stops tracking from the notification while
+Lost Mode is on, the receiver/timer stop until tracking restarts.
+SMS: no minimum secret length enforced; the SMS WIPE ack 404s
+harmlessly (sms-wipe-<millis> is not a server command id). The SMS
+secret, trusted number and push topic never leave the device, except
+the push topic itself (server stores it to publish wake-ups; never
+returned by any endpoint).
+
+Deploy order: (1) apply 005 in the Neon SQL Editor (paste, no file
+import); (2) rebuild web, then the Worker bundle, then cf.py deploy;
+(3) push the 23 files + BUILD_NOTES.md + AlertsPanel.tsx via Codespace.

@@ -22,6 +22,9 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- SIM-change detection reads the active subscription ids (consent step 4). -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!-- Theft response: auto-call the trusted number during Lost Mode
+         (dangerous permission, requested in Settings). -->
+    <uses-permission android:name="android.permission.CALL_PHONE" />
     <!-- Lost Mode shows its screen over the lock screen via full-screen intent. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <!-- Decoy lock: draws the Lost Mode screen over every app. The user
@@ -30,6 +33,23 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Boot receiver: Lost Mode comes back after a reboot. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- SMS commands (sideload only: Play forbids RECEIVE_SMS/SEND_SMS for
+         most apps; OpenGuard is distributed as an APK, not via Play).
+         RECEIVE_SMS lets the owner ring/locate/lock/wipe this phone by
+         text message with no internet; SEND_SMS sends the reply to the
+         owner's trusted number. Cost falls on the app user via their SIM. -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.SEND_SMS" />
+
+    <!-- Chaos mode launches these apps behind the decoy lock during Lost
+         Mode (Android 11+ package visibility: getLaunchIntentForPackage
+         returns null without a queries entry). -->
+    <queries>
+        <package android:name="com.google.android.youtube" />
+        <package android:name="com.google.android.apps.maps" />
+        <package android:name="com.android.chrome" />
+        <package android:name="com.google.android.apps.photos" />
+    </queries>
 
     <application
         android:name=".OpenGuardApp"
@@ -98,6 +118,20 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- SMS commands: listens for texts starting with the owner's secret
+             code (see SmsCommands.kt). SMS_RECEIVED_ACTION, not SMS_DELIVER:
+             OpenGuard is not the default SMS app. BROADCAST_SMS restricts
+             the sender to the system. The message stays visible in the
+             messaging app — nothing is hidden. -->
+        <receiver
+            android:name=".core.security.SmsCommandReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
             </intent-filter>
         </receiver>
 

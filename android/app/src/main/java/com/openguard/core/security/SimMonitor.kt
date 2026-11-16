@@ -20,6 +20,11 @@ import com.openguard.core.location.UploadWorker
  * with the last-seen ids. A change is recorded as an UNCONFIRMED
  * sim_changed event — it is an indication, never proof of theft — and the
  * owner gets a local notification asking them to check it was them.
+ *
+ * One change is special: when NO SIM is active anymore while Lost Mode
+ * is on, chaos mode is armed (a persisted flag the tracking service's
+ * theft-response supervisor picks up). A SIM swap to a different SIM
+ * does not arm it — only removal/unavailability does.
  */
 object SimMonitor {
 
@@ -54,6 +59,32 @@ object SimMonitor {
         )
         SecurityPrefs.setLastSeenSubscriptionIds(context, current)
         postSimChangedNotification(context)
+        // SIM removed (no active subscription left, where one was seen
+        // before) while Lost Mode is on: arm chaos mode. Only the flag
+        // is set here — the chaos timer runs from the tracking
+        // service's scope, never from this worker, so it survives the
+        // worker finishing. The flag is cleared when Lost Mode turns
+        // off; chaos stops only on owner exit.
+        if (current.isEmpty() && lastSeen.isNotEmpty() && LostModeStore.isOn(context)) {
+            SecurityPrefs.setChaosModeActive(context, true)
+            SecurityEvents.record(db, "chaos_started", confirmed = true)
+        }
+    }
+
+    /**
+     * Fast chaos trigger from the SIM-state broadcast (no network
+     * needed): the worker above needs a network connection, but a
+     * removed SIM often means no network at all. Re-checks the real
+     * SIM state first, so a spoofed broadcast alone can never arm
+     * chaos mode. The worker still records the sim_changed /
+     * chaos_started events when it next runs.
+     */
+    fun onSimStateChanged(context: Context) {
+        if (!LostModeStore.isOn(context)) return
+        if (!TrackingPermissions.hasPhoneState(context)) return
+        if (getSubscriptionIds(context).isNotEmpty()) return
+        if (SecurityPrefs.lastSeenSubscriptionIds(context).isNullOrEmpty()) return
+        SecurityPrefs.setChaosModeActive(context, true)
     }
 
     /** Marks the currently inserted SIM(s) as trusted by the owner. */
@@ -95,10 +126,13 @@ object SimMonitor {
 
 /**
  * The SIM-state broadcast is only a nudge: it enqueues a one-time worker
- * run, and the worker's check does the actual compare + recording.
+ * run, and the worker's check does the actual compare + recording. It
+ * also arms chaos mode directly when the SIM is gone during Lost Mode —
+ * the worker needs network, and a removed SIM often means there is none.
  */
 class SimChangeReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
+        SimMonitor.onSimStateChanged(context)
         UploadWorker.enqueueOneTime(context)
     }
 }

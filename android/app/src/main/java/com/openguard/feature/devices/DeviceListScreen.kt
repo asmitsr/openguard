@@ -19,6 +19,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -40,6 +42,10 @@ import com.openguard.ui.GuardCard
 import com.openguard.ui.GuardOutlinedButton
 import com.openguard.ui.GuardTopBar
 import com.openguard.ui.TintedIcon
+import kotlinx.coroutines.delay
+
+/** Silent device-list refresh while the screen is open. */
+private const val DEVICE_POLL_INTERVAL_MS = 25_000L
 
 @Composable
 fun DeviceListScreen(
@@ -56,8 +62,17 @@ fun DeviceListScreen(
     var deviceToDelete by remember { mutableStateOf<DeviceDto?>(null) }
 
     // Refresh whenever this screen is (re-)entered, e.g. after registering
-    // a device on the consent screen (which uses its own ViewModel).
-    LaunchedEffect(Unit) { viewModel.refresh() }
+    // a device on the consent screen (which uses its own ViewModel),
+    // then keep polling silently while the screen stays open. The loop
+    // is cancelled automatically when the screen leaves composition.
+    val pullState = rememberPullToRefreshState()
+    LaunchedEffect(Unit) {
+        viewModel.refresh()
+        while (true) {
+            delay(DEVICE_POLL_INTERVAL_MS)
+            viewModel.poll()
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -132,18 +147,25 @@ fun DeviceListScreen(
                 )
                 Spacer(Modifier.height(8.dp))
             }
-            LazyColumn(
+            PullToRefreshBox(
+                state = pullState,
+                isRefreshing = state.isLoading,
+                onRefresh = { viewModel.refresh() },
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                items(state.devices, key = { it.id }) { device ->
-                    DeviceRow(
-                        device = device,
-                        isThisDevice = device.id == viewModel.thisDeviceId,
-                        onClick = { onDeviceClick(device) },
-                        onCommandsClick = { onCommandsClick(device) },
-                        onDeleteClick = { deviceToDelete = device },
-                    )
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(state.devices, key = { it.id }) { device ->
+                        DeviceRow(
+                            device = device,
+                            isThisDevice = device.id == viewModel.thisDeviceId,
+                            onClick = { onDeviceClick(device) },
+                            onCommandsClick = { onCommandsClick(device) },
+                            onDeleteClick = { deviceToDelete = device },
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(12.dp))

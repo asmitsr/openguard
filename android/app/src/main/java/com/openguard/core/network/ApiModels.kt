@@ -115,6 +115,13 @@ data class DeleteAccountRequest(
     @SerializedName("derived_key") val derivedKey: String,
 )
 
+// ---- Fast updates: instant push ----
+
+/** Registers/rotates the device's random ntfy topic (see NtfyClient). */
+data class PushTopicRequest(
+    @SerializedName("push_topic") val pushTopic: String,
+)
+
 // ---- Phase 2: remote commands + security events ----
 
 /**

@@ -46,6 +46,20 @@ class DeviceViewModel(private val repository: DeviceRepository) : ViewModel() {
         }
     }
 
+    /**
+     * Silent background poll (device list auto-refresh): updates the list
+     * without a loading spinner, and keeps the last good list on failure
+     * instead of flashing an error — the next poll retries.
+     */
+    fun poll() {
+        viewModelScope.launch {
+            when (val result = repository.listDevices()) {
+                is Result.Success -> _uiState.value = DeviceUiState(devices = result.value)
+                is Result.Error -> { /* keep the last good list */ }
+            }
+        }
+    }
+
     fun registerThisDevice(name: String) {
         viewModelScope.launch {
             _registerState.value = RegisterUiState(isLoading = true)

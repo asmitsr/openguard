@@ -8,6 +8,7 @@ import android.content.Intent
 import androidx.core.app.NotificationCompat
 import com.openguard.R
 import com.openguard.core.common.SecurityConfig
+import com.openguard.core.location.LocationService
 import com.openguard.feature.security.LostModeActivity
 
 /**
@@ -35,6 +36,29 @@ object LostMode {
         DeviceAdminManager.setCameraDisabled(context, true)
         showNotification(context)
         val decoy = DecoyLock.show(context)
+        // Theft response (wake counter + auto-call, chaos mode) is
+        // hosted by the tracking foreground service, so start tracking
+        // now — otherwise nothing hosts it when tracking was off. The
+        // start runs after the decoy show so the overlay window exists
+        // (show() itself posts to the main thread, so this ordering is
+        // best-effort; on targetSdk 34 the SYSTEM_ALERT_WINDOW grant
+        // alone is the documented Android 12+ exemption for starting a
+        // foreground service from the background, and the
+        // ACCESS_BACKGROUND_LOCATION grant from consent covers the
+        // location while-in-use check). If the start is denied anyway,
+        // the catch keeps Lost Mode on: the decoy and the boot
+        // receiver still hold the line, and the theft response starts
+        // when tracking next runs.
+        val trackingStarted = try {
+            LocationService.start(context)
+            true
+        } catch (e: IllegalStateException) {
+            // Background start denied (ForegroundServiceStartNotAllowed).
+            false
+        } catch (e: SecurityException) {
+            // While-in-use location check (background location revoked).
+            false
+        }
         val parts = mutableListOf<String>()
         parts += if (locked) {
             "phone locked"
@@ -46,6 +70,11 @@ object LostMode {
         } else {
             "overlay not allowed — message shows as notification"
         }
+        parts += if (trackingStarted) {
+            "tracking started"
+        } else {
+            "tracking start denied (theft response waits for tracking)"
+        }
         return "Lost Mode on — " + parts.joinToString("; ")
     }
 
@@ -53,6 +82,13 @@ object LostMode {
         LostModeStore.clear(context)
         DecoyLock.hide(context)
         DeviceAdminManager.setCameraDisabled(context, false)
+        // Theft response stops with Lost Mode: clear the chaos flag
+        // (the tracking service's supervisor also stops the chaos
+        // timer and resets the wake counter when it sees Lost Mode
+        // off) and silence any chaos alarm right away, even if the
+        // service is not running.
+        SecurityPrefs.setChaosModeActive(context, false)
+        RingService.stop(context)
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.cancel(SecurityConfig.LOST_MODE_NOTIFICATION_ID)
     }

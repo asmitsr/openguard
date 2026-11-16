@@ -69,6 +69,20 @@ interface ApiService {
         @Body request: HeartbeatRequest,
     ): Response<Unit>
 
+    // ---- Fast updates: instant push ----
+
+    /**
+     * Device token. Registers or rotates this device's push (ntfy)
+     * topic — the server publishes wake-ups there when a command is
+     * created. 204.
+     */
+    @POST("api/v1/devices/{id}/push-topic")
+    suspend fun registerPushTopic(
+        @Header("Authorization") deviceAuth: String,
+        @Path("id") id: String,
+        @Body request: PushTopicRequest,
+    ): Response<Unit>
+
     // ---- Phase 2: remote commands + security events ----
 
     /** User token. 201 on first issue, 200 with the existing command on replay. */

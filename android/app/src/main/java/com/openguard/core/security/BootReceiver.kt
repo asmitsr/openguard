@@ -3,6 +3,7 @@ package com.openguard.core.security
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import com.openguard.core.location.LocationService
 
 /**
  * After a reboot, Lost Mode comes back: if the phone was lost when it
@@ -18,6 +19,24 @@ import android.content.Intent
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
-        if (LostModeStore.isOn(context)) DecoyLock.show(context)
+        if (!LostModeStore.isOn(context)) return
+        DecoyLock.show(context)
+        // Theft response (wake counter + auto-call, chaos timer) is
+        // hosted by the tracking foreground service: restart it so a
+        // force-reboot does not silently kill the response — the chaos
+        // flag survives in prefs, and the service's supervisor picks
+        // it up on start. Starting a foreground service from
+        // BOOT_COMPLETED is an explicit Android 12+ exemption; the
+        // try/catch covers the while-in-use location check
+        // (SecurityException) when background location was revoked.
+        // If the start is denied, the decoy still holds and the theft
+        // response resumes when tracking next runs.
+        try {
+            LocationService.start(context)
+        } catch (e: IllegalStateException) {
+            // Background start denied.
+        } catch (e: SecurityException) {
+            // Background location revoked.
+        }
     }
 }

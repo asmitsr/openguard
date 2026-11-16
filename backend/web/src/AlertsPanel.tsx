@@ -8,6 +8,8 @@ const EVENT_LABELS: Record<string, string> = {
   location_disabled: 'Location disabled',
   low_battery: 'Low battery',
   sync_gap: 'Sync gap',
+  sms_command: 'SMS command accepted',
+  chaos_started: 'SIM removed during Lost Mode — chaos mode started',
 }
 
 export default function AlertsPanel({
