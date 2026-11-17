@@ -1174,3 +1174,67 @@ use a fresh debug keystore per run, so the debug fingerprint cannot
 be pinned (passkeys may only work on the signed release APK until a
 fixed debug keystore is committed — committing one changes the debug
 APK signature, so the user must reinstall; tell him first).
+
+## App lock password exit (retry, 17 Nov 2026 — user re-asked 09:07)
+
+The decoy pad/grid is now REAL when an app lock password is set
+(PIN pad with pinLength dots, pattern grid for PATTERN, toggle for
+MIXED — either secret unlocks); correct password exits Lost Mode
+(local turnOff + best-effort server lost_mode_off); wrong entries
+show the identical "Wrong PIN" message, record failed_unlock_attempt
+(source=decoy), and count toward the shared AppLockPassword lockout
+(5 failures, 30s doubling to 5-min cap, ticking countdown).
+LostModeActivity: no-screen-lock dead end fixed — app-password entry
+shows directly when no screen lock but a password is set; clear
+message + Open Settings button when neither exists; credential
+button stays primary when a screen lock is set. Settings copy now
+names the pad ("enter it on the Lost Mode screen's PIN pad"). No
+on-screen signal that the pad is real — deliberate (a thief must not
+learn guessing is worthwhile); discovery is via Settings + chat +
+the implicit dot-count/grid changes. Known limits: pattern-grid dots
+are dim on the dark decoy background; dot count + grid leak the
+password's shape; MIXED is either-secret, not both; the lockout is
+shared across both screens. Push set: 6 Android files (DecoyLock,
+LostModeActivity, SettingsScreen, AppLockPassword, PatternGridView,
+SecurityEvents) — server side (007, commands.ts, labels) already
+shipped in Batch 1.
+
+## Advanced #5 — Intruder Selfie (default OFF)
+- Triggers: 2 failed keyguard unlocks within 5 min (DeviceAdmin.onPasswordFailed ->
+  IntruderSelfie.onKeyguardFailure; time-window counting, no unlock reset), or the
+  5th failed app-lock attempt on the decoy / Lost Mode entry (lockout engages).
+  1-hour cooldown after any capture.
+- Photo: front camera, single JPEG via EvidenceService (ACTION_CAPTURE_PHOTO), same
+  evidence pipeline as clips (Drive upload + metadata POST; "local" if Drive is off).
+  durationS=1 (server rejects 0). Green camera dot always shows. Camera-only
+  foreground when Lost Mode is off, or when Lost Mode is on but mic is revoked.
+  Admin-disabled camera is briefly re-enabled for the capture, then re-disabled.
+- DriveUploader.upload() now derives image/jpeg from .jpg/.jpeg extensions (the
+  camera-based MIME would have uploaded photos as video/mp4).
+
+## Advanced #6 — Duress PIN (default: none set)
+- Second PIN in the app-lock prefs file (own salt+hash). Rules: type PIN or MIXED,
+  same length as the app PIN, must differ from it. Changing the app password clears it.
+- Surfaces: decoy PIN pad + Lost Mode password entry only (system keyguard cannot
+  be intercepted). Entering it shows the identical "Wrong PIN" while silently:
+  Lost Mode on + failed_unlock_attempt (source=duress) + SMS to the trusted number
+  (1/hour cap). Never unlocks. Abort: enter the real app password within 60s.
+
+## Advanced #8 — Fake Shutdown Screen (default OFF, Lost Mode only)
+- PowerMenuGuardService shows a pure-black overlay instead of the decoy when the
+  power menu is detected in Lost Mode and the toggle is on (fallback to the decoy
+  without overlay permission). Owner exit: long-press the top-left corner -> decoy.
+  5s watchdog self-hides if Lost Mode turns off remotely. ~10s power hold still
+  restarts the phone (hardware, unblockable); a reboot clears the fake screen.
+
+## CI fix — compileSdk 35 + AGP 8.6.0 (17 Nov 2026, run #15)
+- Run #15 (commit 4e41b02) FAILED at :app:checkDebugAarMetadata: credentials
+  1.6.0 / work-runtime 2.10.1 / core(-ktx) 1.15.0 require compileSdk 35, but
+  the app compiled against android-34 and AGP 8.5.2 caps compileSdk at 34.
+- Fix: compileSdk 34 -> 35 (app/build.gradle.kts), AGP 8.5.2 -> 8.6.0
+  (libs.versions.toml). AGP 8.6.0 is the documented minimum for API 35 and
+  needs Gradle 8.7 minimum — the wrapper already has 8.7, so no Gradle change.
+  targetSdk stays 34 (Android 15 behavior changes are a separate step).
+- Note: the CI log reported credentials 1.5.0 while the pushed catalog pins
+  1.6.0 — unresolved transcription/resolution discrepancy; the fix satisfies
+  both versions, so it does not block the build.

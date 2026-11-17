@@ -1,12 +1,16 @@
 # OpenGuard Android — version catalog.
 #
 # Version policy (see android/README.md): these are the newest versions
-# compatible with the pinned toolchain (compileSdk 34, AGP 8.5, Gradle 8.7,
-# Kotlin 2.0). The latest 2026 releases of several Jetpack libraries require
-# compileSdk 35-37 and AGP 9.x, so they are deliberately NOT used here.
+# compatible with the pinned toolchain (compileSdk 35, AGP 8.6, Gradle 8.7,
+# Kotlin 2.0). compileSdk moved 34 -> 35 on 17 Nov 2026 because CI run #15
+# failed: credentials 1.6.0 / work 2.10.1 / core 1.15.0 require SDK 35, and
+# AGP 8.5.2 caps compileSdk at 34 (AGP 8.6.0 is the minimum for API 35 per
+# the official AGP docs; AGP 8.6 needs Gradle 8.7 minimum, which we have).
+# The latest 2026 releases of several Jetpack libraries require
+# compileSdk 36-37 and AGP 9.x, so they are deliberately NOT used here.
 
 [versions]
-agp = "8.5.2"
+agp = "8.6.0"
 kotlin = "2.0.21"
 ksp = "2.0.21-1.0.25"
 # Compose versions pinned explicitly (no BOM: the BOM lookup failed in CI).

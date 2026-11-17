@@ -11,7 +11,7 @@ import java.time.Instant
  *
  * Event types (see the API contract): sim_changed, admin_disabled,
  * location_permission_revoked, location_disabled, low_battery, sync_gap,
- * sms_command, chaos_started.
+ * sms_command, chaos_started, failed_unlock_attempt.
  *
  * `confirmed` means the event is a verified fact (e.g. the permission
  * really was revoked). sim_changed is the exception: it is an indication,

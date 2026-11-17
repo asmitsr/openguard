@@ -7,7 +7,11 @@ plugins {
 
 android {
     namespace = "com.openguard"
-    compileSdk = 34
+    // compileSdk 35 (was 34): CI run #15 failed because credentials 1.6.0 /
+    // work 2.10.1 / core 1.15.0 require SDK 35. targetSdk stays 34 for now —
+    // Android 15 behavior changes (edge-to-edge, 16KB pages) are a separate
+    // step; compileSdk 35 alone unblocks the build.
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.openguard"

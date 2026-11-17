@@ -19,16 +19,31 @@ import android.view.WindowManager
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.openguard.OpenGuardApp
 import com.openguard.R
+import com.openguard.core.location.UploadWorker
 import com.openguard.feature.security.LostModeActivity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Decoy lock: a full-screen overlay that looks like a lock screen. Shown
  * the moment Lost Mode turns on, it displays the owner's message and a
- * PIN pad — any entered code always shows "wrong password" and never
- * unlocks. Nothing behind the overlay can be touched: it covers every
- * app window, survives the Home button (it is a system window, not an
+ * PIN pad (or a pattern grid when the app lock password is a pattern).
+ * Nothing behind the overlay can be touched: it covers every app
+ * window, survives the Home button (it is a system window, not an
  * activity), and swallows Back.
+ *
+ * When NO app lock password is set, the pad is a pure decoy: any
+ * entered code shows "wrong" and never unlocks. When one IS set, the
+ * pad/grid is real — the correct password turns Lost Mode off — and
+ * a wrong entry shows the identical "Wrong PIN" message, so a thief
+ * cannot tell whether the pad is real. Wrong entries record a
+ * failed_unlock_attempt event and count toward the AppLockPassword
+ * lockout (5 failures, then 30s doubling to a 5-minute cap), shared
+ * with the Lost Mode screen.
  *
  * The overlay is plainly OpenGuard's Lost Mode screen ("This phone is
  * lost" + the owner's message + "Protected by OpenGuard"). It never
@@ -60,6 +75,10 @@ import com.openguard.feature.security.LostModeActivity
 object DecoyLock {
 
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    // Best-effort background work (server lost_mode_off, event upload):
+    // never blocks the overlay, never crashes it on failure.
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Volatile
     private var isShowing = false
@@ -170,6 +189,48 @@ object DecoyLock {
     }
 
     /**
+     * Owner exit via the app lock password: clears Lost Mode locally
+     * right away (the overlay hides, the camera re-enables, evidence
+     * and the theft response stop), and tells the server best-effort
+     * in the background — if the server call fails (no network), the
+     * next heartbeat syncs lost_mode=false anyway.
+     */
+    internal fun exitWithAppPassword(appContext: Context) {
+        LostMode.turnOff(appContext)
+        ioScope.launch {
+            try {
+                val app = appContext.applicationContext as OpenGuardApp
+                val deviceId = app.tokenStore.deviceId
+                if (deviceId != null) {
+                    app.commandRepository.createCommand(deviceId, "lost_mode_off")
+                }
+            } catch (e: Exception) {
+                // Best-effort: the next heartbeat syncs lost_mode=false.
+            }
+        }
+    }
+
+    /** Records a wrong app-password attempt (decoy or Lost Mode screen). */
+    internal fun recordFailedUnlockAttempt(appContext: Context, source: String) {
+        ioScope.launch {
+            try {
+                val app = appContext.applicationContext as OpenGuardApp
+                SecurityEvents.record(
+                    app.database, "failed_unlock_attempt",
+                    details = mapOf(
+                        "source" to source,
+                        "attempt" to AppLockPassword.consecutiveFailures(appContext),
+                    ),
+                    confirmed = true,
+                )
+                UploadWorker.enqueueOneTime(appContext)
+            } catch (e: Exception) {
+                // Best-effort: the event is lost if the DB write fails.
+            }
+        }
+    }
+
+    /**
      * If the overlay is detached unexpectedly (the system reclaimed it),
      * bring it back while Lost Mode is still on. Intentional removals
      * (hideNow) set expectingRemoval first, so they never re-show.
@@ -237,16 +298,58 @@ private fun circleDrawable(color: Int): GradientDrawable =
     }
 
 /**
- * Builds the fake lock screen: the owner's message, a PIN pad, and an
- * error that always appears. No entered code ever unlocks — the only
- * exits are the remote lost_mode_off command or the hidden owner-exit
- * (long-press the shield icon, then the device credential check).
- * PIN state lives in this call's closure; the view is built once per
- * show, and message refreshes update the message TextView only.
+ * Builds the lock screen: the owner's message, a PIN pad (or a
+ * pattern grid when the app lock password is a pattern), and an
+ * error on a wrong entry.
+ *
+ * When NO app lock password is set, the pad is a pure decoy: any
+ * code shows "wrong" and never unlocks — the only exits are the
+ * remote lost_mode_off command or the hidden owner-exit (long-press
+ * the shield icon, then the device credential check).
+ *
+ * When an app lock password IS set, the pad/grid is REAL: the
+ * correct password turns Lost Mode off (local clear + best-effort
+ * server lost_mode_off). A wrong entry shows the identical "Wrong
+ * PIN — try again" message, so a thief cannot tell whether the pad
+ * is real; every wrong entry records a failed_unlock_attempt event
+ * and counts toward the AppLockPassword lockout (5 failures, then
+ * 30s doubling to a 5-minute cap), shared with the Lost Mode
+ * screen. For MIXED (pattern + PIN) either secret unlocks, and a
+ * toggle swaps between the pad and the grid.
+ *
+ * Discovery note (the owner asked why the pad rejected his
+ * passwords): there is deliberately NO on-screen signal that the
+ * pad is real — any signal a thief can read ("this pad accepts a
+ * password") tells them guessing is worthwhile. The owner learns
+ * it where he sets the password (Settings: "enter it on the Lost
+ * Mode screen's PIN pad") and from the chat explanation. Two
+ * implicit changes exist: the dot count matches the PIN length
+ * when one is set (a 6-digit PIN shows 6 dots, not the decoy's 4),
+ * and a pattern password replaces the pad with a grid. Both leak
+ * the password's shape to a thief; the lockout is the real
+ * protection, and without the dot count a 6-digit PIN could not
+ * be entered at all.
+ *
+ * PIN/pattern state lives in this call's closure; the view is
+ * built once per show, and message refreshes update the message
+ * TextView only.
  */
 private fun createDecoyView(appContext: Context): Pair<View, TextView> {
+    val handler = Handler(Looper.getMainLooper())
+    val appLockType = AppLockPassword.getType(appContext)
+    val pinLength = AppLockPassword.pinLength(appContext)
+    // Digit count on the pad: the owner's PIN length when a PIN is
+    // set, else the decoy's 4.
+    val padDigits =
+        if (appLockType == AppLockType.PIN || appLockType == AppLockType.MIXED) pinLength else 4
+    var showingPattern = appLockType == AppLockType.PATTERN
     var pin = ""
     var wrong = false
+
+    fun lockoutRemainingMs(): Long = AppLockPassword.lockoutRemainingMs(appContext)
+
+    fun defaultStatus(): String =
+        if (showingPattern) "Draw your pattern to unlock" else "Enter PIN to unlock"
 
     fun textView(
         text: String,
@@ -308,7 +411,7 @@ private fun createDecoyView(appContext: Context): Pair<View, TextView> {
     )
     root.addView(messageView)
 
-    // Flexible space: pushes the PIN pad to the bottom.
+    // Flexible space: pushes the entry area to the bottom.
     root.addView(
         View(appContext),
         LinearLayout.LayoutParams(
@@ -318,15 +421,20 @@ private fun createDecoyView(appContext: Context): Pair<View, TextView> {
         ),
     )
 
-    val statusView = textView("Enter PIN to unlock", 14f, COLOR_SECONDARY.toInt())
+    val statusView = textView(defaultStatus(), 14f, COLOR_SECONDARY.toInt())
     root.addView(statusView)
     spacer(12)
 
+    // PIN container: dots + keys. Hidden when the pattern grid shows.
+    val pinContainer = LinearLayout(appContext).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+    }
     val dotsRow = LinearLayout(appContext).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER
     }
-    val dots = (0 until 4).map {
+    val dots = (0 until padDigits).map {
         View(appContext).apply {
             background = circleDrawable(COLOR_OUTLINE.toInt())
             val size = appContext.dp(16)
@@ -336,8 +444,40 @@ private fun createDecoyView(appContext: Context): Pair<View, TextView> {
             }
         }.also { dotsRow.addView(it) }
     }
-    root.addView(dotsRow)
-    spacer(24)
+    pinContainer.addView(dotsRow)
+    pinContainer.addView(
+        View(appContext),
+        LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            appContext.dp(24),
+        ),
+    )
+    root.addView(pinContainer)
+
+    // Pattern container: the grid. Hidden unless the pattern shows.
+    val patternContainer = LinearLayout(appContext).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+    }
+    val patternGrid = PatternGridView(appContext).apply {
+        layoutParams = LinearLayout.LayoutParams(
+            appContext.dp(280),
+            appContext.dp(280),
+        ).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
+    }
+    patternContainer.addView(patternGrid)
+    root.addView(patternContainer)
+
+    // MIXED only: swaps between the pad and the grid.
+    val toggleView = textView("Draw pattern instead", 14f, COLOR_GOLD.toInt()).apply {
+        isClickable = true
+        visibility = if (appLockType == AppLockType.MIXED) View.VISIBLE else View.GONE
+    }
+    root.addView(toggleView)
+    spacer(8)
+    root.addView(textView("Protected by OpenGuard", 12f, COLOR_SECONDARY.toInt()))
 
     fun refreshDots() {
         dots.forEachIndexed { index, dot ->
@@ -347,24 +487,134 @@ private fun createDecoyView(appContext: Context): Pair<View, TextView> {
         }
     }
 
+    // Ticks the lockout countdown once a second; stops on its own when
+    // the lockout expires or the overlay is gone.
+    val lockoutTick = object : Runnable {
+        override fun run() {
+            if (!root.isAttachedToWindow) return
+            val remaining = lockoutRemainingMs()
+            if (remaining > 0) {
+                statusView.text = "Try again in ${(remaining + 999) / 1000}s"
+                statusView.setTextColor(COLOR_ERROR.toInt())
+                handler.postDelayed(this, 1000)
+            } else {
+                refreshStatus()
+            }
+        }
+    }
+
+    fun startLockoutTick() {
+        handler.removeCallbacks(lockoutTick)
+        handler.post(lockoutTick)
+    }
+
+    fun refreshStatus() {
+        val remaining = lockoutRemainingMs()
+        patternGrid.isEnabled = remaining <= 0
+        if (remaining > 0) {
+            statusView.text = "Try again in ${(remaining + 999) / 1000}s"
+            statusView.setTextColor(COLOR_ERROR.toInt())
+            startLockoutTick()
+        } else {
+            statusView.text = defaultStatus()
+            statusView.setTextColor(COLOR_SECONDARY.toInt())
+        }
+    }
+
     val clearWrong = Runnable {
         pin = ""
         wrong = false
-        statusView.text = "Enter PIN to unlock"
-        statusView.setTextColor(COLOR_SECONDARY.toInt())
         refreshDots()
+        refreshStatus()
+    }
+
+    fun showWrong(message: String) {
+        wrong = true
+        statusView.text = message
+        statusView.setTextColor(COLOR_ERROR.toInt())
+        handler.postDelayed(clearWrong, 900)
+    }
+
+    fun submitPin() {
+        val entered = pin
+        if (appLockType == null) {
+            // No password set: the decoy never unlocks.
+            showWrong("Wrong PIN — try again")
+            return
+        }
+        if (AppLockPassword.verifyPin(appContext, entered)) {
+            AppLockPassword.resetFailures(appContext)
+            DecoyLock.exitWithAppPassword(appContext)
+        } else if (AppLockPassword.verifyDuressPin(appContext, entered)) {
+            // Duress: the identical "Wrong PIN" to the coercer, while
+            // the silent response fires. Not a failure (no lockout
+            // count, no failed_unlock_attempt from this branch — the
+            // response records its own source=duress event).
+            DuressResponse.trigger(appContext)
+            showWrong("Wrong PIN — try again")
+        } else {
+            AppLockPassword.recordFailure(appContext)
+            DecoyLock.recordFailedUnlockAttempt(appContext, "decoy")
+            if (AppLockPassword.consecutiveFailures(appContext) ==
+                AppLockPassword.MAX_ATTEMPTS
+            ) {
+                // 5th failure — the lockout just engaged: photograph
+                // the intruder (only when the owner enabled it).
+                IntruderSelfie.onAppLockLockout(appContext)
+            }
+            if (lockoutRemainingMs() > 0) {
+                pin = ""
+                wrong = false
+                refreshDots()
+                refreshStatus()
+            } else {
+                showWrong("Wrong PIN — try again")
+            }
+        }
+    }
+
+    fun onPatternEntered(cells: List<Int>) {
+        if (wrong) return
+        if (lockoutRemainingMs() > 0) {
+            refreshStatus()
+            return
+        }
+        if (appLockType == null) return
+        // Too short to be valid, or the wrong pattern: a failed
+        // attempt either way (a thief scribbling gets no free tries).
+        if (cells.size < AppLockPassword.MIN_PATTERN_CELLS ||
+            !AppLockPassword.verifyPattern(appContext, cells)
+        ) {
+            AppLockPassword.recordFailure(appContext)
+            DecoyLock.recordFailedUnlockAttempt(appContext, "decoy")
+            if (AppLockPassword.consecutiveFailures(appContext) ==
+                AppLockPassword.MAX_ATTEMPTS
+            ) {
+                // 5th failure — the lockout just engaged: photograph
+                // the intruder (only when the owner enabled it).
+                IntruderSelfie.onAppLockLockout(appContext)
+            }
+            if (lockoutRemainingMs() > 0) {
+                refreshStatus()
+            } else {
+                showWrong("Wrong pattern — try again")
+            }
+            return
+        }
+        AppLockPassword.resetFailures(appContext)
+        DecoyLock.exitWithAppPassword(appContext)
     }
 
     fun pressDigit(digit: String) {
-        if (wrong || pin.length >= 4) return
+        if (wrong || pin.length >= padDigits) return
+        if (lockoutRemainingMs() > 0) {
+            refreshStatus()
+            return
+        }
         pin += digit
         refreshDots()
-        // Always wrong — the decoy never unlocks.
-        if (pin.length == 4) {
-            wrong = true
-            statusView.text = "Wrong PIN — try again"
-            statusView.setTextColor(COLOR_ERROR.toInt())
-            Handler(Looper.getMainLooper()).postDelayed(clearWrong, 900)
+        if (pin.length == padDigits) {
+            submitPin()
         }
     }
 
@@ -373,6 +623,19 @@ private fun createDecoyView(appContext: Context): Pair<View, TextView> {
             pin = pin.dropLast(1)
             refreshDots()
         }
+    }
+
+    fun swapEntryMode() {
+        if (appLockType != AppLockType.MIXED) return
+        showingPattern = !showingPattern
+        pin = ""
+        wrong = false
+        handler.removeCallbacks(clearWrong)
+        refreshDots()
+        pinContainer.visibility = if (showingPattern) View.GONE else View.VISIBLE
+        patternContainer.visibility = if (showingPattern) View.VISIBLE else View.GONE
+        toggleView.text = if (showingPattern) "Use PIN instead" else "Draw pattern instead"
+        refreshStatus()
     }
 
     fun pinKey(label: String, onClick: () -> Unit): TextView =
@@ -415,11 +678,25 @@ private fun createDecoyView(appContext: Context): Pair<View, TextView> {
                 else -> rowLayout.addView(pinKey(key) { pressDigit(key) })
             }
         }
-        root.addView(rowLayout)
-        spacer(16)
+        pinContainer.addView(rowLayout)
+        pinContainer.addView(
+            View(appContext),
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                appContext.dp(16),
+            ),
+        )
     }
-    spacer(8)
-    root.addView(textView("Protected by OpenGuard", 12f, COLOR_SECONDARY.toInt()))
+
+    patternGrid.onPatternComplete = { cells -> onPatternEntered(cells) }
+    toggleView.setOnClickListener { swapEntryMode() }
+
+    // Initial state: the right entry mode, and the countdown if a
+    // lockout from an earlier session is still running.
+    pinContainer.visibility = if (showingPattern) View.GONE else View.VISIBLE
+    patternContainer.visibility = if (showingPattern) View.VISIBLE else View.GONE
+    toggleView.text = if (showingPattern) "Use PIN instead" else "Draw pattern instead"
+    refreshStatus()
 
     return root to messageView
 }
