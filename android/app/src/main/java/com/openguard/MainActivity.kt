@@ -18,6 +18,7 @@ import com.openguard.core.location.TrackingPermissions
 import com.openguard.core.location.UploadWorker
 import com.openguard.core.security.EraseStore
 import com.openguard.core.security.LostModeStore
+import com.openguard.core.security.OfflineAutoLock
 import com.openguard.feature.auth.AuthViewModel
 import com.openguard.feature.auth.LoginScreen
 import com.openguard.feature.auth.RecoverAccountScreen
@@ -25,8 +26,15 @@ import com.openguard.feature.auth.RegisterScreen
 import com.openguard.feature.devices.ConsentScreen
 import com.openguard.feature.devices.DeviceListScreen
 import com.openguard.feature.devices.DeviceViewModel
+import com.openguard.feature.geofence.GeofenceRepository
+import com.openguard.feature.geofence.GeofenceScreen
+import com.openguard.feature.geofence.GeofenceViewModel
 import com.openguard.feature.health.HealthScreen
 import com.openguard.feature.health.HealthViewModel
+import com.openguard.feature.passkeys.PasskeyScreen
+import com.openguard.feature.passkeys.PasskeyViewModel
+import com.openguard.feature.protection.OfflineProtectionScreen
+import com.openguard.feature.protection.OfflineProtectionViewModel
 import com.openguard.feature.security.CommandCenterScreen
 import com.openguard.feature.security.CommandCenterViewModel
 import com.openguard.feature.security.EraseCountdownActivity
@@ -46,6 +54,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val app = application as OpenGuardApp
+        // Warning-tap deep link: the offline auto-lock warning
+        // notification opens the app on the protection screen with the
+        // cancel dialog. The tap itself requires unlocking the phone
+        // first when it is locked, so a thief cannot cancel from the
+        // lock screen.
+        val showCancelFromNotification =
+            intent.getBooleanExtra(OfflineAutoLock.EXTRA_SHOW_CANCEL, false)
         // Pending erase takes precedence over Lost Mode: the countdown
         // screen is the one the owner must see first.
         if (EraseStore.pending(this) != null) {
@@ -57,7 +72,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             OpenGuardTheme {
                 val navController = rememberNavController()
-                val startDestination = if (app.tokenStore.isLoggedIn) "devices" else "login"
+                val startDestination = when {
+                    !app.tokenStore.isLoggedIn -> "login"
+                    showCancelFromNotification -> "protection?showCancel=true"
+                    else -> "devices"
+                }
                 NavHost(navController = navController, startDestination = startDestination) {
                     composable("login") {
                         val vm: AuthViewModel =
@@ -223,6 +242,47 @@ class MainActivity : ComponentActivity() {
                                     "history/$deviceId/${Uri.encode(deviceName)}",
                                 )
                             },
+                            onGeofencesClick = {
+                                navController.navigate(
+                                    "geofences/$deviceId/${Uri.encode(deviceName)}",
+                                )
+                            },
+                            onProtectionClick = { navController.navigate("protection") },
+                            onPasskeysClick = { navController.navigate("passkeys") },
+                        )
+                    }
+                    composable("passkeys") {
+                        val vm: PasskeyViewModel =
+                            viewModel(factory = vmFactory {
+                                PasskeyViewModel(app.api, app.authRepository)
+                            })
+                        PasskeyScreen(
+                            viewModel = vm,
+                            onBack = { navController.popBackStack() },
+                        )
+                    }
+                    composable(
+                        route = "geofences/{deviceId}/{deviceName}",
+                        arguments = listOf(
+                            navArgument("deviceId") { type = NavType.StringType },
+                            navArgument("deviceName") { type = NavType.StringType },
+                        ),
+                    ) { entry ->
+                        val deviceId = entry.arguments?.getString("deviceId") ?: return@composable
+                        val deviceName = entry.arguments?.getString("deviceName") ?: "Device"
+                        val vm: GeofenceViewModel =
+                            viewModel(factory = vmFactory {
+                                GeofenceViewModel(
+                                    GeofenceRepository(app.api),
+                                    app.deviceRepository,
+                                    this@MainActivity.applicationContext,
+                                )
+                            })
+                        GeofenceScreen(
+                            deviceId = deviceId,
+                            deviceName = deviceName,
+                            viewModel = vm,
+                            onBack = { navController.popBackStack() },
                         )
                     }
                     composable(
@@ -259,6 +319,25 @@ class MainActivity : ComponentActivity() {
                             deviceName = deviceName,
                             viewModel = vm,
                             onBack = { navController.popBackStack() },
+                        )
+                    }
+                    composable(
+                        route = "protection?showCancel={showCancel}",
+                        arguments = listOf(
+                            navArgument("showCancel") {
+                                type = NavType.BoolType
+                                defaultValue = false
+                            },
+                        ),
+                    ) { entry ->
+                        val vm: OfflineProtectionViewModel =
+                            viewModel(factory = vmFactory {
+                                OfflineProtectionViewModel(this@MainActivity.applicationContext)
+                            })
+                        OfflineProtectionScreen(
+                            viewModel = vm,
+                            onBack = { navController.popBackStack() },
+                            showCancel = entry.arguments?.getBoolean("showCancel") ?: false,
                         )
                     }
                     composable("settings") {

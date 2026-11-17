@@ -1,7 +1,9 @@
 package com.openguard.feature.auth
 
+import android.app.Activity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.openguard.core.auth.PasskeyManager
 import com.openguard.core.common.Result
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,6 +50,26 @@ class AuthViewModel(private val repository: AuthRepository) : ViewModel() {
             _uiState.value = when (val result = repository.recover(email, code, newPassword)) {
                 is Result.Success -> AuthUiState(recovered = true)
                 is Result.Error -> AuthUiState(error = result.message)
+            }
+        }
+    }
+
+    /** Passkey sign-in (same busy/error/isLoggedIn state as password login). */
+    fun passkeyLogin(email: String, activity: Activity) {
+        if ("@" !in email) {
+            _uiState.value = AuthUiState(error = "Enter a valid email address.")
+            return
+        }
+        viewModelScope.launch {
+            _uiState.value = AuthUiState(isLoading = true)
+            _uiState.value = when (val result = repository.passkeyLogin(email.trim(), activity)) {
+                is Result.Success -> AuthUiState(isLoggedIn = true)
+                // A cancellation is not an error — just stop loading.
+                is Result.Error -> if (result.message == PasskeyManager.CANCELLED) {
+                    AuthUiState()
+                } else {
+                    AuthUiState(error = result.message)
+                }
             }
         }
     }

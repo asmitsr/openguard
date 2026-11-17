@@ -10,6 +10,7 @@ const EVENT_LABELS: Record<string, string> = {
   sync_gap: 'Sync gap',
   sms_command: 'SMS command accepted',
   chaos_started: 'SIM removed during Lost Mode — chaos mode started',
+  failed_unlock_attempt: 'Failed unlock attempt',
 }
 
 export default function AlertsPanel({

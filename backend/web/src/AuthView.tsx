@@ -1,5 +1,10 @@
 import { useState } from 'react'
-import { api, deriveKey, randomSalt, setTokens } from './api'
+import {
+  browserSupportsWebAuthn,
+  startAuthentication,
+  type PublicKeyCredentialRequestOptionsJSON,
+} from '@simplewebauthn/browser'
+import { api, deriveKey, isPasskeyCancelled, randomSalt, setTokens } from './api'
 
 export default function AuthView({ onAuthed }: { onAuthed: () => void }) {
   const [isRegister, setIsRegister] = useState(false)
@@ -7,6 +12,7 @@ export default function AuthView({ onAuthed }: { onAuthed: () => void }) {
   const [password, setPassword] = useState('')
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
+  const [pkBusy, setPkBusy] = useState(false)
   const [showRecover, setShowRecover] = useState(false)
   const [recEmail, setRecEmail] = useState('')
   const [recCode, setRecCode] = useState('')
@@ -45,6 +51,62 @@ export default function AuthView({ onAuthed }: { onAuthed: () => void }) {
       setErr((e as Error).message)
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function passkeyLogin() {
+    const em = email.trim()
+    if (!em) {
+      setErr('Enter your email first.')
+      return
+    }
+    if (!browserSupportsWebAuthn()) {
+      setErr('This browser does not support passkeys.')
+      return
+    }
+    setPkBusy(true)
+    try {
+      let lastErr: unknown = null
+      for (let attempt = 0; attempt < 2; attempt++) {
+        let inVerify = false
+        try {
+          // Challenge + ceremony + verify, retried once with a fresh
+          // challenge if the verify fails (the challenge may have been
+          // issued by another isolate). A cancelled prompt is not retried.
+          const options = await api<PublicKeyCredentialRequestOptionsJSON>('/passkeys/login/challenge', {
+            method: 'POST',
+            body: { email: em },
+          })
+          const credential = await startAuthentication({ optionsJSON: options })
+          inVerify = true
+          const d = await api<{ access_token: string; refresh_token: string }>('/passkeys/login/verify', {
+            method: 'POST',
+            body: { email: em, credential },
+          })
+          setTokens(d.access_token, d.refresh_token, em)
+          setErr('')
+          onAuthed()
+          return
+        } catch (e) {
+          if (isPasskeyCancelled(e)) {
+            setErr('Passkey sign-in cancelled.')
+            return
+          }
+          // No passkey for this email — a fresh challenge cannot fix it,
+          // so show the server's message as-is instead of re-prompting.
+          if ((e as Error).message === 'invalid email or passkey') {
+            setErr((e as Error).message)
+            return
+          }
+          if (!inVerify) throw e
+          lastErr = e
+        }
+      }
+      throw lastErr
+    } catch (e) {
+      setErr((e as Error).message)
+    } finally {
+      setPkBusy(false)
     }
   }
 
@@ -95,6 +157,13 @@ export default function AuthView({ onAuthed }: { onAuthed: () => void }) {
           {busy ? 'Verifying…' : isRegister ? 'Register' : 'Log in'}
         </button>
       </div>
+      {!isRegister && (
+        <div className="row">
+          <button className="secondary" onClick={passkeyLogin} disabled={busy || pkBusy}>
+            {pkBusy ? 'Waiting for passkey…' : 'Sign in with passkey'}
+          </button>
+        </div>
+      )}
       <p className="muted">
         <button
           className="link"

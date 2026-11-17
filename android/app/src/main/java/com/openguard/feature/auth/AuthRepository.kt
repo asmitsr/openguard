@@ -1,9 +1,16 @@
 package com.openguard.feature.auth
 
+import android.app.Activity
+import com.google.gson.JsonParser
+import com.openguard.core.auth.PasskeyManager
 import com.openguard.core.common.Result
 import com.openguard.core.network.ApiService
 import com.openguard.core.network.DeleteAccountRequest
 import com.openguard.core.network.LoginRequest
+import com.openguard.core.network.PasskeyLoginChallengeRequest
+import com.openguard.core.network.PasskeyLoginVerifyRequest
+import com.openguard.core.network.PasskeyRegisterResponse
+import com.openguard.core.network.PasskeyRegisterVerifyRequest
 import com.openguard.core.network.RecoverRequest
 import com.openguard.core.network.RegisterRequest
 import com.openguard.core.network.StepUpRequest
@@ -142,4 +149,62 @@ class AuthRepository(
             is Result.Success -> Result.Success(result.value.revoked)
             is Result.Error -> result
         }
+
+    // ---- Passkeys (#9) ----
+
+    /**
+     * Passkey sign-in: challenge, Credential Manager prompt, verify.
+     * Retries ONCE with a fresh challenge when verify fails — the
+     * challenge may have been issued by another server isolate. A
+     * cancellation or a missing provider is returned at once, never
+     * retried. Tokens are saved exactly like password login.
+     */
+    suspend fun passkeyLogin(email: String, activity: Activity): Result<Unit> {
+        var lastError: Result.Error? = null
+        repeat(2) {
+            when (val challenge = apiCall { api.passkeyLoginChallenge(PasskeyLoginChallengeRequest(email)) }) {
+                is Result.Error -> return challenge
+                is Result.Success -> {
+                    val responseJson = when (val credential =
+                        PasskeyManager(activity).getPasskey(challenge.value.toString())) {
+                        is Result.Error -> return credential
+                        is Result.Success -> credential.value
+                    }
+                    when (val verify = apiCall {
+                        api.passkeyLoginVerify(
+                            PasskeyLoginVerifyRequest(email, JsonParser.parseString(responseJson)),
+                        )
+                    }) {
+                        is Result.Success -> {
+                            tokenStore.saveTokens(verify.value.accessToken, verify.value.refreshToken)
+                            tokenStore.userEmail = verify.value.user?.email ?: email
+                            return Result.Success(Unit)
+                        }
+                        is Result.Error -> lastError = verify
+                    }
+                }
+            }
+        }
+        return lastError ?: Result.Error("Passkey sign-in failed.")
+    }
+
+    /**
+     * Passkey registration: one attempt only (challenge, Credential
+     * Manager prompt, verify). The retry-once lives in
+     * PasskeyViewModel, which owns the create flow's UI state.
+     */
+    suspend fun passkeyRegister(name: String, activity: Activity): Result<PasskeyRegisterResponse> {
+        val challenge = apiCall { api.passkeyRegisterChallenge() }
+        if (challenge is Result.Error) return challenge
+        val responseJson = when (val credential =
+            PasskeyManager(activity).createPasskey(challenge.value.toString())) {
+            is Result.Error -> return credential
+            is Result.Success -> credential.value
+        }
+        return apiCall {
+            api.passkeyRegisterVerify(
+                PasskeyRegisterVerifyRequest(name, JsonParser.parseString(responseJson)),
+            )
+        }
+    }
 }

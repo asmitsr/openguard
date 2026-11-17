@@ -3,7 +3,9 @@ import { db, type Env } from './db'
 // Append-only audit log. Events: register, login, logout, session_revoke,
 // sessions_revoke_others, step_up, recovery_codes_generate, password_recover,
 // device_register, device_relink, device_unlink, device_sign_out,
-// command_create, command_ack, command_reject, evidence_upload.
+// command_create, command_ack, command_reject, evidence_upload,
+// geofence_create, geofence_update, geofence_delete, geofence_event,
+// passkey_register, passkey_login, passkey_revoke.
 // (Account deletion has no surviving audit row: audit_events.user_id cascades,
 // so the row would be deleted with the user.)
 export async function audit(

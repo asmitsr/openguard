@@ -227,6 +227,7 @@ app.post('/:id/heartbeat', async (c) => {
     battery_temperature_c?: unknown
     booted_at?: unknown
     notifications_enabled?: unknown
+    lost_mode?: unknown
   }>(c)
   const batteryLevel = body?.battery_level
   const batteryCharging = body?.battery_charging
@@ -240,6 +241,7 @@ app.post('/:id/heartbeat', async (c) => {
   const batteryTemperatureC = body?.battery_temperature_c
   const bootedAt = body?.booted_at
   const notificationsEnabled = body?.notifications_enabled
+  const lostMode = body?.lost_mode
   if (
     typeof batteryLevel !== 'number' ||
     !Number.isInteger(batteryLevel) ||
@@ -255,7 +257,8 @@ app.post('/:id/heartbeat', async (c) => {
     !isOptByteCount(ramFreeBytes) ||
     !isOptTemperature(batteryTemperatureC) ||
     !isOptIsoDate(bootedAt) ||
-    !isOptBool(notificationsEnabled)
+    !isOptBool(notificationsEnabled) ||
+    !isOptBool(lostMode)
   ) {
     return err(
       c,
@@ -276,7 +279,12 @@ app.post('/:id/heartbeat', async (c) => {
         ram_free_bytes = COALESCE(${ramFreeBytes ?? null}, ram_free_bytes),
         battery_temperature_c = COALESCE(${batteryTemperatureC ?? null}, battery_temperature_c),
         booted_at = COALESCE(${bootedAt ?? null}, booted_at),
-        notifications_enabled = COALESCE(${notificationsEnabled ?? null}, notifications_enabled)
+        notifications_enabled = COALESCE(${notificationsEnabled ?? null}, notifications_enabled),
+        -- Local Lost Mode state (snatch / offline auto-lock / geofence
+        -- activations are local-only). A remote lost_mode_on/off command
+        -- sets the same column; the two agree within one heartbeat
+        -- (a brief flicker while a command is in flight is expected).
+        lost_mode = COALESCE(${lostMode ?? null}, lost_mode)
     WHERE id = ${device.id}`
   return c.body(null, 204)
 })

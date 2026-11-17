@@ -33,6 +33,7 @@ import com.openguard.core.database.LocationEntity
 import com.openguard.core.security.DecoyLock
 import com.openguard.core.security.LostModeStore
 import com.openguard.core.security.SecurityEvents
+import com.openguard.core.theft.SnatchDetector
 import com.openguard.core.theft.TheftResponse
 import java.time.Instant
 import kotlinx.coroutines.CoroutineScope
@@ -114,6 +115,14 @@ class LocationService : Service() {
                 // remain the backstop when this fails.
                 val app = applicationContext as OpenGuardApp
                 LiveUploader.flushOutbox(app)
+                // Geofence check on the latest fix only; never breaks tracking.
+                result.locations.lastOrNull()?.let { last ->
+                    runCatching {
+                        GeofenceManager.onFix(
+                            applicationContext, app, last.latitude, last.longitude, last.accuracy,
+                        )
+                    }
+                }
                 if (LiveUploader.isLiveMode(applicationContext)) {
                     LiveUploader.sendHeartbeat(app)
                 }
@@ -159,6 +168,7 @@ class LocationService : Service() {
         // Stop the theft response first: unregisters the screen-on
         // receiver and stops any chaos alarm before the scope dies.
         TheftResponse.stop(applicationContext)
+        SnatchDetector.stop()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         TrackingState.set(false)
         scope.cancel()
@@ -230,6 +240,12 @@ class LocationService : Service() {
         // outlive any worker run. start() is idempotent; the supervisor
         // inside gates everything on Lost Mode being on.
         TheftResponse.start(applicationContext, scope)
+        // Snatch detection (accelerometer heuristic): also hosted here,
+        // so it only runs while tracking is on — the phone is never kept
+        // awake for this alone. start() is idempotent and a no-op when
+        // the owner has it disabled. The settings screen also calls
+        // start/stop directly when the toggle flips mid-run.
+        SnatchDetector.start(applicationContext)
     }
 
     /**

@@ -57,6 +57,10 @@ class UploadWorker(appContext: Context, params: WorkerParameters) :
             // Best-effort: (re-)register the push topic so commands can
             // wake this phone in seconds. Never fails the worker.
             runCatching { NtfyClient.ensureRegistered(app) }
+            // Geofences: refresh the cached zones, then flush any events
+            // queued while offline (each deleted only on server confirm).
+            runCatching { GeofenceManager.refreshCache(applicationContext, app) }
+            if (runCatching { GeofenceManager.flushPendingEvents(applicationContext, app) }.getOrDefault(false)) contactedServer = true
             runDetectionChecks(app)
             // Locations upload through the shared direct path (same
             // data-loss rule: rows are deleted only on server confirm).

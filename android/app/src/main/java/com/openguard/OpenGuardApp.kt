@@ -3,7 +3,9 @@ package com.openguard
 import android.app.Application
 import com.openguard.core.database.AppDatabase
 import com.openguard.core.evidence.EvidenceApi
+import com.openguard.core.location.BatteryBurstWorker
 import com.openguard.core.location.UploadWorker
+import com.openguard.core.security.OfflineAutoLock
 import com.openguard.core.network.ApiClient
 import com.openguard.core.network.ApiService
 import com.openguard.core.network.TokenStore
@@ -52,5 +54,11 @@ class OpenGuardApp : Application() {
         // The worker no-ops until a device is registered, so it is safe
         // to schedule unconditionally.
         UploadWorker.schedulePeriodic(this)
+        // Re-schedule the protection workers: a force-stop cancels all
+        // WorkManager work until the app runs again. KEEP makes these
+        // no-ops when already scheduled, and both workers no-op (or
+        // self-cancel) while their feature is disabled.
+        OfflineAutoLock.ensureScheduled(this)
+        BatteryBurstWorker.enqueueWatch(this)
     }
 }

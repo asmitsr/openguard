@@ -77,4 +77,8 @@ dependencies {
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.video)
     implementation(libs.appauth)
+
+    // Passkeys: Credential Manager only. The credentials-play-services-auth
+    // artifact is for Sign in with Google, NOT passkeys — do not add it.
+    implementation(libs.androidx.credentials)
 }

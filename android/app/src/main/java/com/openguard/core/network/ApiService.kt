@@ -1,11 +1,13 @@
 package com.openguard.core.network
 
+import com.google.gson.JsonObject
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Path
 import retrofit2.http.Query
 
@@ -164,4 +166,77 @@ interface ApiService {
     /** User token. Rotates the device token; also revokes other sessions. 204. */
     @POST("api/v1/devices/{id}/sign-out")
     suspend fun signOutDevice(@Path("id") id: String): Response<Unit>
+
+    // ---- Phase 5: geofences ----
+
+    /** User token. */
+    @GET("api/v1/devices/{id}/geofences")
+    suspend fun listGeofences(@Path("id") id: String): Response<GeofencesResponse>
+
+    /** User token. 201. */
+    @POST("api/v1/devices/{id}/geofences")
+    suspend fun createGeofence(
+        @Path("id") id: String,
+        @Body request: CreateGeofenceRequest,
+    ): Response<GeofenceResponse>
+
+    /** User token. */
+    @PUT("api/v1/devices/{id}/geofences/{gid}")
+    suspend fun updateGeofence(
+        @Path("id") id: String,
+        @Path("gid") gid: String,
+        @Body request: UpdateGeofenceRequest,
+    ): Response<GeofenceResponse>
+
+    /** User token. 204. */
+    @DELETE("api/v1/devices/{id}/geofences/{gid}")
+    suspend fun deleteGeofence(
+        @Path("id") id: String,
+        @Path("gid") gid: String,
+    ): Response<Unit>
+
+    /** Device token. 201. */
+    @POST("api/v1/devices/{id}/geofences/{gid}/events")
+    suspend fun reportGeofenceEvent(
+        @Header("Authorization") deviceAuth: String,
+        @Path("id") id: String,
+        @Path("gid") gid: String,
+        @Body request: ReportGeofenceEventRequest,
+    ): Response<GeofenceEventResponse>
+
+    /** User token. Newest first. */
+    @GET("api/v1/devices/{id}/geofences/events")
+    suspend fun listGeofenceEvents(
+        @Path("id") id: String,
+        @Query("limit") limit: Int,
+    ): Response<GeofenceEventsResponse>
+
+    // ---- Passkeys (#9) ----
+
+    /**
+     * User token. Returns the registration options JSON verbatim — kept
+     * as a JsonObject and re-serialized for Credential Manager.
+     */
+    @POST("api/v1/passkeys/register/challenge")
+    suspend fun passkeyRegisterChallenge(): Response<JsonObject>
+
+    /** User token. 201 with the created passkey. */
+    @POST("api/v1/passkeys/register/verify")
+    suspend fun passkeyRegisterVerify(@Body request: PasskeyRegisterVerifyRequest): Response<PasskeyRegisterResponse>
+
+    /** NO auth. Returns the authentication options JSON verbatim. */
+    @POST("api/v1/passkeys/login/challenge")
+    suspend fun passkeyLoginChallenge(@Body request: PasskeyLoginChallengeRequest): Response<JsonObject>
+
+    /** NO auth. Same shape as password login — reuses AuthResponse. */
+    @POST("api/v1/passkeys/login/verify")
+    suspend fun passkeyLoginVerify(@Body request: PasskeyLoginVerifyRequest): Response<AuthResponse>
+
+    /** User token. */
+    @GET("api/v1/passkeys")
+    suspend fun listPasskeys(): Response<List<PasskeyDto>>
+
+    /** User token. 204. */
+    @DELETE("api/v1/passkeys/{id}")
+    suspend fun deletePasskey(@Path("id") id: String): Response<Unit>
 }

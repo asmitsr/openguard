@@ -42,4 +42,63 @@
     <string name="bluetooth_channel_name">Bluetooth</string>
     <string name="bluetooth_notification_title">Turn on Bluetooth?</string>
     <string name="bluetooth_notification_text">OpenGuard was asked to turn on Bluetooth. Tap to allow it — Android does not let apps turn Bluetooth on silently.</string>
+
+    <string name="geofence_title">Geofences</string>
+    <string name="geofence_empty">No geofences yet — add one to get alerts when this phone enters or leaves a place.</string>
+    <string name="geofence_add_title">Add geofence</string>
+    <string name="geofence_edit_title">Edit geofence</string>
+    <string name="geofence_name_label">Name</string>
+    <string name="geofence_radius_label">Radius — %1$d m</string>
+    <string name="geofence_row_detail">Radius %1$d m · %2$s</string>
+    <string name="geofence_action_notify">Notify only</string>
+    <string name="geofence_action_notify_desc">Just an alert when the phone enters or leaves.</string>
+    <string name="geofence_action_notify_on_exit">Notify on exit</string>
+    <string name="geofence_action_lock">Lock</string>
+    <string name="geofence_action_lock_desc">Lock the phone when it leaves.</string>
+    <string name="geofence_action_lock_on_exit">Lock on exit</string>
+    <string name="geofence_action_lost">Lost Mode</string>
+    <string name="geofence_action_lost_desc">Turn on Lost Mode when it leaves.</string>
+    <string name="geofence_action_lost_on_exit">Lost Mode on exit</string>
+    <string name="geofence_center">Center: last known location (%1$s, %2$s)</string>
+    <string name="geofence_no_location">No location yet — turn tracking on and wait for the first fix</string>
+    <string name="geofence_events_title">Recent events</string>
+    <string name="geofence_events_empty">No geofence events yet.</string>
+    <string name="geofence_inside">Inside</string>
+    <string name="geofence_outside">Outside</string>
+    <string name="geofence_unknown">Unknown</string>
+    <string name="geofence_delete_title">Delete geofence?</string>
+    <string name="geofence_delete_text">“%1$s” will stop watching this place.</string>
+    <string name="geofence_delete">Delete</string>
+    <string name="geofence_cancel">Cancel</string>
+    <string name="geofence_save">Save geofence</string>
+    <string name="geofence_update">Save changes</string>
+    <string name="geofence_refresh">Refresh</string>
+    <string name="geofence_error_name">Name must be 1–100 characters.</string>
+    <string name="geofence_error_radius">Radius must be between 50 and 5000 m.</string>
+    <string name="geofence_entered">Entered %1$s</string>
+    <string name="geofence_left">Left %1$s</string>
+
+    <string name="offline_autolock_warning_title">Lost Mode will turn on in 1 hour</string>
+    <string name="offline_autolock_warning_text">No network for %1$d hours — tap to cancel.</string>
+
+    <string name="snatch_notification_title">Snatch detected — phone locked</string>
+    <string name="snatch_notification_text">Lost Mode turned on automatically.</string>
+
+    <string name="deadman_warning_title">This phone will erase itself in 24 hours</string>
+    <string name="deadman_warning_text">No unlock for %1$d days — unlock to cancel.</string>
+
+    <string name="passkey_title">Passkeys</string>
+    <string name="passkey_intro">A passkey lives on THIS device’s secure hardware. The private key never leaves this phone. If you lose this phone, sign in with your password. Revoking removes the passkey from your account.</string>
+    <string name="passkey_empty">No passkeys yet — create one to sign in with your fingerprint or face instead of a password.</string>
+    <string name="passkey_create_title">Create a passkey</string>
+    <string name="passkey_name_label">Name</string>
+    <string name="passkey_name_default">This phone</string>
+    <string name="passkey_create">Create passkey</string>
+    <string name="passkey_create_hint">Your phone will ask for your fingerprint, face, or PIN to create it.</string>
+    <string name="passkey_revoke">Revoke</string>
+    <string name="passkey_revoke_confirm">Tap again to revoke</string>
+    <string name="passkey_created_at">Created %1$s</string>
+    <string name="passkey_last_used">Last used %1$s</string>
+    <string name="passkey_never_used">Never used</string>
+    <string name="passkey_sign_in">Sign in with passkey</string>
 </resources>

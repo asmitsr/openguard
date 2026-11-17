@@ -43,6 +43,7 @@ private val EVENT_LABELS = mapOf(
     "sync_gap" to "Sync gap",
     "sms_command" to "SMS command accepted",
     "chaos_started" to "SIM removed during Lost Mode — chaos mode started",
+    "failed_unlock_attempt" to "Failed unlock attempt",
 )
 
 /**
@@ -126,7 +127,7 @@ private fun TimelineRow(event: SecurityEventDto) {
 }
 
 private fun eventIcon(eventType: String): Int = when (eventType) {
-    "sim_changed", "admin_disabled", "chaos_started" -> R.drawable.ic_triangle_alert
+    "sim_changed", "admin_disabled", "chaos_started", "failed_unlock_attempt" -> R.drawable.ic_triangle_alert
     "location_permission_revoked", "location_disabled" -> R.drawable.ic_map_pin
     "low_battery" -> R.drawable.ic_battery
     "sync_gap" -> R.drawable.ic_history

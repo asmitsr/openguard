@@ -73,6 +73,9 @@ import kotlinx.coroutines.launch
 //   onAlertsClick  -> "timeline/{deviceId}/{deviceName}"
 //   onHealthClick  -> "health/{deviceId}/{deviceName}"
 //   onHistoryClick -> "history/{deviceId}/{deviceName}"
+//   onGeofencesClick -> "geofences/{deviceId}/{deviceName}"
+//   onProtectionClick -> "protection" (this phone's local settings)
+//   onPasskeysClick -> "passkeys" (account-level, not per-device)
 @Composable
 fun CommandCenterScreen(
     deviceId: String,
@@ -83,6 +86,9 @@ fun CommandCenterScreen(
     onAlertsClick: () -> Unit = {},
     onHealthClick: () -> Unit = {},
     onHistoryClick: () -> Unit = {},
+    onGeofencesClick: () -> Unit = {},
+    onProtectionClick: () -> Unit = {},
+    onPasskeysClick: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -252,6 +258,25 @@ fun CommandCenterScreen(
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 ActionTile(
+                    iconRes = R.drawable.ic_radar,
+                    label = "Geofences",
+                    onClick = onGeofencesClick,
+                )
+                // Offline protection is local to the phone in hand, so
+                // the tile only shows for this device.
+                if (isThisDevice) {
+                    ActionTile(
+                        iconRes = R.drawable.ic_shield_check,
+                        label = "Offline protection",
+                        onClick = onProtectionClick,
+                    )
+                } else {
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                ActionTile(
                     iconRes = R.drawable.ic_history,
                     label = "History",
                     onClick = onHistoryClick,
@@ -302,7 +327,13 @@ fun CommandCenterScreen(
                     onClick = { send("evidence_capture") },
                     loading = state.sending == "evidence_capture",
                 )
-                Spacer(Modifier.weight(1f))
+                // Passkeys are account-level, but the Command Center is
+                // where account security actions live for now.
+                ActionTile(
+                    iconRes = R.drawable.ic_shield_check,
+                    label = "Passkeys",
+                    onClick = onPasskeysClick,
+                )
             }
             Spacer(Modifier.height(8.dp))
             Text(

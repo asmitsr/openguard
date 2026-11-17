@@ -159,6 +159,7 @@ object LiveUploader {
             batteryTemperatureC = health.batteryTemperatureC,
             bootedAt = health.bootedAt,
             notificationsEnabled = health.notificationsEnabled,
+            lostMode = LostModeStore.isOn(context),
         )
     }
 

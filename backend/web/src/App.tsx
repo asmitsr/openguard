@@ -9,6 +9,8 @@ import {
   type Command,
   type Device,
   type EvidenceClip,
+  type Geofence,
+  type GeofenceEvent,
   type Location,
   type PrivacyInfo,
   type SecurityEvent,
@@ -17,10 +19,12 @@ import {
 import AuthView from './AuthView'
 import DevicesPanel from './DevicesPanel'
 import EvidencePanel from './EvidencePanel'
+import GeofencesPanel from './GeofencesPanel'
 import MapPanel from './MapPanel'
 import HistoryPanel from './HistoryPanel'
 import CommandPanel from './CommandPanel'
 import AlertsPanel from './AlertsPanel'
+import PasskeysPanel from './PasskeysPanel'
 import { AuditPanel, PrivacyPanel, RecoveryPanel, SessionsPanel } from './AccountPanels'
 
 export default function App() {
@@ -38,6 +42,9 @@ export default function App() {
   const [alertsErr, setAlertsErr] = useState('')
   const [evidence, setEvidence] = useState<EvidenceClip[]>([])
   const [evidenceErr, setEvidenceErr] = useState('')
+  const [geofences, setGeofences] = useState<Geofence[]>([])
+  const [geofenceEvents, setGeofenceEvents] = useState<GeofenceEvent[]>([])
+  const [geofencesErr, setGeofencesErr] = useState('')
   const [sessions, setSessions] = useState<Session[] | null>(null)
   const [sessionsErr, setSessionsErr] = useState('')
   const [recoveryCount, setRecoveryCount] = useState<number | null | undefined>(undefined)
@@ -121,6 +128,20 @@ export default function App() {
     }
   }
 
+  async function loadGeofences() {
+    const id = selectedRef.current
+    if (!id) return
+    try {
+      const fences = await api<{ geofences: Geofence[] }>('/devices/' + id + '/geofences')
+      const evs = await api<{ events: GeofenceEvent[] }>('/devices/' + id + '/geofences/events?limit=50')
+      setGeofences(fences.geofences || [])
+      setGeofenceEvents(evs.events || [])
+      setGeofencesErr('')
+    } catch (e) {
+      setGeofencesErr((e as Error).message)
+    }
+  }
+
   async function loadSessions() {
     try {
       setSessions(await api<Session[]>('/auth/sessions'))
@@ -167,6 +188,7 @@ export default function App() {
     loadCommands()
     loadAlerts()
     loadEvidence()
+    loadGeofences()
   }
 
   async function logout() {
@@ -196,7 +218,10 @@ export default function App() {
   // the phone records and uploads it. Never real-time.
   useEffect(() => {
     if (!authed || !selected) return
-    const t = setInterval(() => loadEvidence(), 30000)
+    const t = setInterval(() => {
+      loadEvidence()
+      loadGeofences()
+    }, 30000)
     return () => clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authed, selected])
@@ -269,9 +294,17 @@ export default function App() {
                 loadCommands()
               }}
             />
+            <GeofencesPanel
+              device={selDevice}
+              geofences={geofences}
+              events={geofenceEvents}
+              listErr={geofencesErr}
+              onChanged={loadGeofences}
+            />
             <div className="grid">
               <SessionsPanel sessions={sessions} listErr={sessionsErr} onChanged={loadSessions} />
               <RecoveryPanel count={recoveryCount} onCount={setRecoveryCount} />
+              <PasskeysPanel />
               <AuditPanel events={audit} listErr={auditErr} />
             </div>
             <PrivacyPanel privacy={privacy} listErr={privacyErr} onLoggedOut={() => setAuthed(false)} />

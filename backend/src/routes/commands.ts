@@ -42,6 +42,7 @@ const EVENT_TYPES = [
   'sync_gap',
   'sms_command',
   'chaos_started',
+  'failed_unlock_attempt',
 ] as const
 
 function isAction(v: unknown): v is Action {

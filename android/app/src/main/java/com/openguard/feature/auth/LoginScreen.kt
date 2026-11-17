@@ -1,5 +1,6 @@
 package com.openguard.feature.auth
 
+import android.app.Activity
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -21,13 +22,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.openguard.R
 import com.openguard.ui.ErrorText
 import com.openguard.ui.GuardButton
+import com.openguard.ui.GuardOutlinedButton
 import com.openguard.ui.TintedIcon
 
 @Composable
@@ -38,6 +42,9 @@ fun LoginScreen(
     onRecoverClick: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsState()
+    // Email is hoisted: the passkey button below the form needs it too.
+    var email by remember { mutableStateOf("") }
+    val context = LocalContext.current
     LaunchedEffect(state.isLoggedIn) {
         if (state.isLoggedIn) onLoginSuccess()
     }
@@ -45,10 +52,25 @@ fun LoginScreen(
         title = "Welcome back",
         submitLabel = "Log in",
         state = state,
+        email = email,
+        onEmailChange = { email = it },
         onSubmit = viewModel::login,
         onClearError = viewModel::clearError,
     ) {
         Column {
+            // Passkey sign-in sits BELOW the password form and never
+            // replaces it — the password is the fallback if the phone
+            // (and its passkey) is lost.
+            GuardOutlinedButton(
+                onClick = {
+                    (context as? Activity)?.let { viewModel.passkeyLogin(email, it) }
+                },
+                text = stringResource(R.string.passkey_sign_in),
+                iconRes = R.drawable.ic_shield_check,
+                enabled = !state.isLoading,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
             TextButton(onClick = onRegisterClick) {
                 Text("No account yet? Register")
             }
@@ -65,11 +87,12 @@ internal fun AuthForm(
     title: String,
     submitLabel: String,
     state: AuthUiState,
+    email: String,
+    onEmailChange: (String) -> Unit,
     onSubmit: (email: String, password: String) -> Unit,
     onClearError: () -> Unit,
     footer: @Composable () -> Unit,
 ) {
-    var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var localError by remember { mutableStateOf<String?>(null) }
 
@@ -89,7 +112,7 @@ internal fun AuthForm(
         Spacer(Modifier.height(24.dp))
         OutlinedTextField(
             value = email,
-            onValueChange = { email = it; localError = null; onClearError() },
+            onValueChange = { onEmailChange(it); localError = null; onClearError() },
             label = { Text("Email") },
             leadingIcon = {
                 Icon(painterResource(R.drawable.ic_mail), contentDescription = null)

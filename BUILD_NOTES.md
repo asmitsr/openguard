@@ -1027,3 +1027,150 @@ replaces the previous wallpaper and cannot be restored. TTS speaks at
 max media volume and leaves it there. Wake screen does not unlock the
 keyguard. Health data appears only after a device heartbeats with the
 new build AND 006 is applied.
+
+## Geofences round (17 Nov 2026, 02:20–02:27)
+
+Circular zones per device (center + radius 50–5000 m) with enter/exit
+detection and zone actions. Server: migration 008 (geofences +
+geofence_events tables, idempotent), new backend/src/routes/geofences.ts
+(6 endpoints: list/create/update/delete, device-token event report with
+30/min rate limit, events list newest-first with geofence_name JOIN;
+all audited). Android: new core/location/GeofenceManager.kt — hand-written
+haversine, no GeofencingClient; state in plain SharedPreferences (no Room
+change); 2-fix hysteresis, 5-min cooldown per geofence+transition, fixes
+with accuracy >200 m skipped, reboot re-initialises state from the first
+fix with no event; actions via existing LostMode.turnOn /
+DeviceAdminManager.lockNow; notification ID 9, channel openguard-geofence.
+Semantics: notify fires on enter AND exit; lock/lost_mode fire on EXIT
+only (entering a safe zone must never lock the phone). New
+feature/geofence/ screen (list with Inside/Outside badge, add/edit
+centred on last known location, recent events) + Command Center tile +
+nav route geofences/{deviceId}/{deviceName}. Dashboard:
+GeofencesPanel.tsx after EvidencePanel, 30 s poll. Offline: cached
+geofences keep evaluating; events queue locally and upload on reconnect
+(deleted only on server confirm). Limits: no evaluation while tracking
+is off; clock jumps >10 s look like reboots; notification ID 9 shared
+across zones. NOTE: the NavHost lives in MainActivity.kt, not
+OpenGuardApp.kt. This round touched NO App Lock file (DecoyLock,
+LostModeActivity, LostMode, SettingsScreen, AppLockPassword,
+PatternGridView, SecurityEvents, commands.ts, AlertsPanel, TimelineScreen,
+007 migration all untouched) — the 8 App Lock files remain unpushed.
+
+## Offline auto-lock + low-battery burst round (17 Nov 2026, 03:02–03:11)
+
+Two Android-only protections, no migration/backend/dashboard. Offline
+auto-lock: separate 15-min worker with no constraints (UploadWorker's
+network constraint would never run offline); fires Lost Mode when
+offline past 6/12/24h (default 12, default OFF) AND locked; 1-hour
+warning notification (ID 10) with tap-to-cancel via MainActivity deep
+link; fires once per stretch, records sync_gap {reason:
+offline_auto_lock}. Low-battery burst: always-on 15-min watch while
+enabled (default OFF); one fresh fix + outbox flush + heartbeat +
+low_battery event {burst, level, fix} at <=5%, once per discharge
+cycle, reset on charge or >10%; works with tracking off, never starts
+the service. No BATTERY_LOW manifest receiver — BATTERY_LOW and
+POWER_CONNECTED are NOT on the Android 8+ implicit-broadcast exemption
+list (official docs), so it would never fire. Force-stop gap CLOSED by
+the parent: OpenGuardApp.onCreate re-schedules both workers
+(KEEP/idempotent) next to UploadWorker.schedulePeriodic.
+
+## Snatch detection round (#3, 17 Nov 2026, 03:12–03:16) + heartbeat lost_mode fix
+
+Snatch detection: accelerometer heuristic in
+core/theft/SnatchDetector.kt — calm-before (2 s) + spike (28 m/s2
+Medium) + sustained motion (3 s, half the samples moving, last second
+not still) fires LostMode.turnOn + high-priority notification
+(ID 11) + 5-min cooldown. Sensitivity Low/Medium/High scales all four
+thresholds. Hosted by LocationService (tracking must be ON);
+SENSOR_DELAY_GAME (~50 Hz) — NORMAL (5 Hz) could miss a 100-300 ms
+yank. UI section in OfflineProtectionScreen (default OFF). No new
+server event type. Known false positive: still phone grabbed + owner
+sprints at once can arm + confirm (spike threshold makes it uncommon,
+not impossible); recovery is the device credential.
+
+Heartbeat lost_mode fix (parent, same round): local Lost Mode
+activations (snatch / offline auto-lock / geofence) never reached the
+server — devices.lost_mode was set only by remote commands, so the
+dashboard badge stayed stale. The heartbeat now carries lost_mode
+(HeartbeatRequest.lostMode, optional; LiveUploader reads
+LostModeStore.isOn; devices.ts validates + persists with COALESCE, so
+older app versions keep working). A remote command and a heartbeat can
+briefly disagree while the command is in flight; they agree within one
+heartbeat. No migration (devices.lost_mode already exists).
+
+## Dead-man's switch + failed-attempt wipe cap (advanced round #2, 17 Nov 2026, 03:18–03:25)
+
+Android-only; no backend/dashboard/migration in this round — but
+db/migrations/007_failed_unlock.sql MUST be applied to Neon before
+this APK ships, or the server 400s the whole security-event batch on
+the unknown failed_unlock_attempt type. This round is the first
+recorder of that event type (details source=keyguard).
+
+DeadManSwitch (object + DeadManSwitchWorker, shared 15-min worker,
+no constraints): if the owner never unlocks for lockDays (3/7/14/30,
+default 7), Lost Mode turns on; if still locked past wipeDays
+(7/14/30/60, default 30, strictly longer than lockDays, enforced in
+UI + setters), EraseCountdown starts ("deadman-wipe-<millis>").
+Unlock detection is the worker's KeyguardManager.isDeviceLocked
+check only — no ACTION_USER_PRESENT (manifest receivers for implicit
+broadcasts do not fire on API 26+). 24h before the wipe threshold a
+high-priority warning posts once per stretch (notification ID 12 —
+parent fix: the round first used 11, which SnatchDetector already
+owns); unlocking cancels it. No early return when Lost Mode is on
+(the wipe must fire while Lost Mode holds the phone locked); the
+warning is checked BEFORE the lock branch (the warning window is
+always past the lock threshold, so lock-first would swallow it —
+caught in coordinator review). Test hook: "Test lock firing"
+backdates lastUnlockAt just past the lock threshold + one-time
+worker run; it can only ever fire the lock, never the wipe. Both
+features share one worker ("openguard-deadman-watch"); scheduling
+cancels only when both are disabled.
+
+FailedAttemptWipe: DeviceAdminReceiver.onPasswordFailed counts REAL
+keyguard failures only (decoy PINs never reach the system keyguard).
+Every failure records failed_unlock_attempt (confirmed, source=
+keyguard) + prompt upload, even with the cap off. At the cap
+(5/10/15/20, default 10) it fires EraseCountdown ("wipecap-<millis>")
+and resets the count. The counter resets on the next worker run
+after a successful unlock (up to 15 min lag). eSIM toggle (default
+OFF): the flag is stored keyed by the pending erase's commandId and
+consumed exactly once inside DeviceAdminManager.wipeData, so an
+aborted countdown can never leak WIPE_EUICC into a later remote
+erase; EraseCountdown/EraseWorker/EraseCountdownActivity untouched.
+Remote erase behavior unchanged (it never sets the flag).
+
+Honest limits: no screen lock = neither feature fires; fire times
+approximate (15-min cadence + Doze); the switch fires on the owner's
+own inactivity too (phone left at home WILL lock then wipe); no
+dedicated security event for dead-man's switch firing; counting
+needs device admin active.
+
+## Passkey login (advanced round #9, 17 Nov 2026, 03:28–03:35)
+
+FIDO2/WebAuthn via @simplewebauthn/server 14.1.0 (backend) +
+@simplewebauthn/browser 14.0.0 (dashboard) + androidx.credentials
+1.6.0 (Android). Backend: 6 endpoints in routes/passkeys.ts
+(register challenge/verify, login challenge/verify, list, revoke);
+RP openguard-api.asmitsr.workers.dev / OpenGuard, env-overridable
+(RP_ID/RP_NAME/RP_ORIGIN in wrangler [vars] + server.ts + root
+.env.example; passkeys.ts falls back to the workers.dev defaults, so
+an API deploy works without the vars set). Migration 009 (passkeys
+table) MUST be applied before this APK ships. Anti-enumeration:
+unknown/no-passkey emails get the same-shaped dummy challenge
+(allowCredentials: []); login verify returns one 401 for every
+failure. Step-up isolation verified: /auth/step-up takes derived_key
+only, so a passkey session cannot mint a step-up token. Challenge
+store is in-memory per-isolate (5-min TTL, single-use); clients
+retry once. v14 notes: userID must be bytes (UUID as UTF-8); login
+verification requires user verification by default. Android:
+PasskeyManager wraps Credential Manager, request/response JSON
+verbatim; login button below the password form; Passkeys screen via
+Command Center tile. Dashboard: passkey login on AuthView +
+PasskeysPanel next to Sessions. KNOWN FOLLOW-UP: Android passkey
+creation requires Digital Asset Links — assetlinks.json must be
+served at /.well-known/assetlinks.json with handle_all_urls +
+get_login_creds and the app's SHA-256 fingerprints; CI debug builds
+use a fresh debug keystore per run, so the debug fingerprint cannot
+be pinned (passkeys may only work on the signed release APK until a
+fixed debug keystore is committed — committing one changes the debug
+APK signature, so the user must reinstall; tell him first).

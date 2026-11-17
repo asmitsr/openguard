@@ -83,6 +83,34 @@ export interface Session {
   current?: boolean
 }
 
+export interface Passkey {
+  id: string
+  name: string
+  created_at: string
+  last_used_at: string | null
+}
+
+export interface Geofence {
+  id: string
+  device_id: string
+  name: string
+  latitude: number
+  longitude: number
+  radius_m: number
+  action: 'notify' | 'lock' | 'lost_mode'
+  created_at: string
+}
+
+export interface GeofenceEvent {
+  id: string
+  geofence_id: string
+  geofence_name?: string | null
+  device_id: string
+  transition: 'enter' | 'exit'
+  recorded_at: string
+  created_at?: string | null
+}
+
 export interface AuditEvent {
   event: string
   created_at: string
@@ -191,6 +219,14 @@ export async function api<T>(path: string, opts: ApiOpts = {}): Promise<T> {
   }
   if (res.status === 204) return null as T
   return res.json() as Promise<T>
+}
+
+// WebAuthn cancellation: @simplewebauthn/browser wraps the browser's
+// NotAllowedError in a WebAuthnError whose cause is the original error,
+// and an aborted ceremony surfaces as ERROR_CEREMONY_ABORTED.
+export function isPasskeyCancelled(e: unknown): boolean {
+  const err = e as Error & { code?: string; cause?: Error }
+  return err.name === 'NotAllowedError' || err.cause?.name === 'NotAllowedError' || err.code === 'ERROR_CEREMONY_ABORTED'
 }
 
 // Step-up auth: re-derive the key from the password and exchange it for a

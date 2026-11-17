@@ -127,6 +127,10 @@ data class HeartbeatRequest(
     @SerializedName("battery_temperature_c") val batteryTemperatureC: Float? = null,
     @SerializedName("booted_at") val bootedAt: String? = null,
     @SerializedName("notifications_enabled") val notificationsEnabled: Boolean? = null,
+    // Local Lost Mode state (snatch / offline auto-lock / geofence
+    // activations are local-only — without this the dashboard badge
+    // never reflects them). Absent leaves the stored value untouched.
+    @SerializedName("lost_mode") val lostMode: Boolean? = null,
 )
 
 data class DeleteAccountRequest(
@@ -261,4 +265,98 @@ data class AuditDto(
 data class CommandVerifyResponse(
     @SerializedName("command") val command: CommandDto,
     @SerializedName("audit") val audit: List<AuditDto>,
+)
+
+// ---- Phase 5: geofences ----
+
+data class GeofenceDto(
+    @SerializedName("id") val id: String,
+    @SerializedName("device_id") val deviceId: String,
+    @SerializedName("name") val name: String,
+    @SerializedName("latitude") val latitude: Double,
+    @SerializedName("longitude") val longitude: Double,
+    @SerializedName("radius_m") val radiusM: Int,
+    // "notify" | "lock" | "lost_mode".
+    @SerializedName("action") val action: String,
+    @SerializedName("created_at") val createdAt: String?,
+)
+
+data class GeofenceResponse(
+    @SerializedName("geofence") val geofence: GeofenceDto,
+)
+
+data class GeofencesResponse(
+    @SerializedName("geofences") val geofences: List<GeofenceDto>,
+)
+
+data class CreateGeofenceRequest(
+    @SerializedName("name") val name: String,
+    @SerializedName("latitude") val latitude: Double,
+    @SerializedName("longitude") val longitude: Double,
+    @SerializedName("radius_m") val radiusM: Int,
+    @SerializedName("action") val action: String,
+)
+
+data class UpdateGeofenceRequest(
+    @SerializedName("name") val name: String? = null,
+    @SerializedName("latitude") val latitude: Double? = null,
+    @SerializedName("longitude") val longitude: Double? = null,
+    @SerializedName("radius_m") val radiusM: Int? = null,
+    @SerializedName("action") val action: String? = null,
+)
+
+data class GeofenceEventDto(
+    @SerializedName("id") val id: String,
+    @SerializedName("geofence_id") val geofenceId: String,
+    @SerializedName("geofence_name") val geofenceName: String?,
+    @SerializedName("device_id") val deviceId: String,
+    // "enter" | "exit".
+    @SerializedName("transition") val transition: String,
+    @SerializedName("recorded_at") val recordedAt: String,
+    @SerializedName("created_at") val createdAt: String?,
+)
+
+data class GeofenceEventResponse(
+    @SerializedName("event") val event: GeofenceEventDto,
+)
+
+data class GeofenceEventsResponse(
+    @SerializedName("events") val events: List<GeofenceEventDto>,
+)
+
+data class ReportGeofenceEventRequest(
+    @SerializedName("transition") val transition: String,
+    @SerializedName("recorded_at") val recordedAt: String,
+)
+
+// ---- Passkeys (#9) ----
+// The challenge options are JsonObject, not a typed DTO: their shape is
+// owned by the server's WebAuthn library, and re-serializing a typed DTO
+// risks dropping fields the credential provider needs.
+
+data class PasskeyDto(
+    @SerializedName("id") val id: String,
+    @SerializedName("name") val name: String,
+    @SerializedName("created_at") val createdAt: String?,
+    @SerializedName("last_used_at") val lastUsedAt: String?,
+)
+
+data class PasskeyRegisterVerifyRequest(
+    @SerializedName("name") val name: String?,
+    @SerializedName("credential") val credential: JsonElement,
+)
+
+data class PasskeyLoginChallengeRequest(
+    @SerializedName("email") val email: String,
+)
+
+data class PasskeyLoginVerifyRequest(
+    @SerializedName("email") val email: String,
+    @SerializedName("credential") val credential: JsonElement,
+)
+
+data class PasskeyRegisterResponse(
+    @SerializedName("id") val id: String,
+    @SerializedName("name") val name: String,
+    @SerializedName("created_at") val createdAt: String?,
 )

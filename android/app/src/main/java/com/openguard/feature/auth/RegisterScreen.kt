@@ -6,6 +6,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 
 @Composable
 fun RegisterScreen(
@@ -14,6 +17,7 @@ fun RegisterScreen(
     onLoginClick: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsState()
+    var email by remember { mutableStateOf("") }
     LaunchedEffect(state.isLoggedIn) {
         if (state.isLoggedIn) onRegisterSuccess()
     }
@@ -21,6 +25,8 @@ fun RegisterScreen(
         title = "Create your account",
         submitLabel = "Register",
         state = state,
+        email = email,
+        onEmailChange = { email = it },
         onSubmit = viewModel::register,
         onClearError = viewModel::clearError,
     ) {

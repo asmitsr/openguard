@@ -36,6 +36,23 @@ class OpenGuardDeviceAdmin : DeviceAdminReceiver() {
             }
         }
     }
+
+    override fun onPasswordFailed(context: Context, intent: Intent) {
+        // onPasswordFailed fires only for the REAL system keyguard —
+        // the decoy PIN pad is app UI and can never trigger it. No new
+        // manifest declaration is needed: the receiver is already
+        // declared with BIND_DEVICE_ADMIN, and onPasswordFailed needs
+        // no extra policy. goAsync keeps the receiver alive until the
+        // (suspend) counting finishes.
+        val pending = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                FailedAttemptWipe.onFailedAttempt(context)
+            } finally {
+                pending.finish()
+            }
+        }
+    }
 }
 
 object DeviceAdminManager {
@@ -123,12 +140,24 @@ object DeviceAdminManager {
      * admin is not active (or on error). Factory Reset Protection is
      * deliberately NOT cleared (no WIPE_RESET_PROTECTION_DATA): a wiped
      * stolen phone stays locked to the owner's Google account.
+     * The eSIM flag is set only by the failed-attempt wipe cap for its
+     * own pending erase, keyed by commandId, and consumed exactly once
+     * here — remote erase never sets it, so its behavior is unchanged.
      */
     fun wipeData(context: Context): Boolean {
         return try {
             val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
             if (!dpm.isAdminActive(componentName(context))) return false
-            dpm.wipeData(DevicePolicyManager.WIPE_EXTERNAL_STORAGE)
+            val pending = EraseStore.pending(context)
+            val wipeEuicc = pending != null &&
+                FailedAttemptWipe.consumePendingWipeEuicc(context, pending.commandId)
+            if (wipeEuicc) {
+                dpm.wipeData(
+                    DevicePolicyManager.WIPE_EXTERNAL_STORAGE or DevicePolicyManager.WIPE_EUICC,
+                )
+            } else {
+                dpm.wipeData(DevicePolicyManager.WIPE_EXTERNAL_STORAGE)
+            }
             true
         } catch (e: SecurityException) {
             false

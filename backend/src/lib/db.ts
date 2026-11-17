@@ -1,9 +1,15 @@
 import { neon, type NeonQueryFunction } from '@neondatabase/serverless'
 
 // Worker bindings. DATABASE_URL is set as a Workers secret by the operator;
-// it is never hardcoded or logged.
+// it is never hardcoded or logged. RP_* are the WebAuthn relying-party
+// config for passkeys (non-secret; set in wrangler.toml [vars] on Workers
+// and via env on the Node self-host path). All three are optional: when
+// unset, passkeys.ts falls back to the Workers deployment values.
 export type Env = {
   DATABASE_URL: string
+  RP_ID?: string
+  RP_NAME?: string
+  RP_ORIGIN?: string
 }
 
 // Rows as objects (arrayMode off, fullResults off).

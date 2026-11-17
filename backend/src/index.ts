@@ -4,8 +4,10 @@ import auth from './routes/auth'
 import commands from './routes/commands'
 import devices from './routes/devices'
 import evidence from './routes/evidence'
+import geofences from './routes/geofences'
 import locations from './routes/locations'
 import misc from './routes/misc'
+import passkeys from './routes/passkeys'
 import type { Env } from './lib/db'
 
 const app = new Hono<{ Bindings: Env }>()
@@ -16,9 +18,11 @@ app.get('/', (c) => c.html(dashboardHtml))
 app.get('/api/v1/health', (c) => c.json({ ok: true }))
 
 app.route('/api/v1/auth', auth)
+app.route('/api/v1/passkeys', passkeys)
 app.route('/api/v1/devices', devices)
 app.route('/api/v1/devices', locations)
 app.route('/api/v1/devices', evidence)
+app.route('/api/v1/devices', geofences)
 app.route('/api/v1', commands)
 app.route('/api/v1', misc)
 

@@ -8,9 +8,11 @@ import { closeNodeDb, initNodeDb } from './lib/dbNode'
 // never imports this file (or dbNode.ts), so postgres.js and
 // @hono/node-server never enter the Worker bundle.
 //
-// Env: DATABASE_URL is required (the only env var the app reads). PORT
-// defaults to 8787 — the same port `wrangler dev` uses, so one API_BASE_URL
-// works for both paths.
+// Env: DATABASE_URL is required (the only REQUIRED env var the app reads).
+// PORT defaults to 8787 — the same port `wrangler dev` uses, so one
+// API_BASE_URL works for both paths. RP_ID / RP_NAME / RP_ORIGIN are the
+// optional WebAuthn relying-party config for passkeys; when unset, the
+// passkeys routes fall back to the Workers deployment values.
 
 const DATABASE_URL = process.env.DATABASE_URL
 if (!DATABASE_URL) {
@@ -26,8 +28,16 @@ initNodeDb(DATABASE_URL)
 const server = serve(
   {
     // Hono bindings come from the 2nd arg of app.fetch; there is no Workers
-    // env on Node, so DATABASE_URL is passed explicitly.
-    fetch: (req) => app.fetch(req, { DATABASE_URL }),
+    // env on Node, so DATABASE_URL is passed explicitly, along with the
+    // optional WebAuthn RP config (undefined values fall back to the
+    // Workers deployment defaults in the passkeys routes).
+    fetch: (req) =>
+      app.fetch(req, {
+        DATABASE_URL,
+        RP_ID: process.env.RP_ID,
+        RP_NAME: process.env.RP_NAME,
+        RP_ORIGIN: process.env.RP_ORIGIN,
+      }),
     port: PORT,
   },
   (info) => {
