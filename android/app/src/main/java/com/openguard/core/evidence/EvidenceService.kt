@@ -42,6 +42,10 @@ import kotlinx.coroutines.sync.withLock
  * When device admin disabled the camera (Lost Mode does this when
  * admin is active), clips are audio-only and the metadata says so.
  *
+ * The ACTION_CAPTURE_PHOTO path (Intruder Selfie) is the one exception
+ * to the Lost-Mode-only rule: one front-camera still, fired by failed
+ * unlock attempts, with Lost Mode on or off.
+ *
  * CONSENT: evidence is owner-armed (Lost Mode is an explicit owner
  * action), the persistent notification is visible the whole time, and
  * Android's green camera/mic indicator always shows while recording.
@@ -70,6 +74,36 @@ class EvidenceService : Service() {
                 // the regular interval loop running.
                 if (ensureForeground()) {
                     scope.launch { recordOneClip() }
+                }
+            }
+            ACTION_CAPTURE_PHOTO -> {
+                // Intruder selfie: one front-camera still. No Lost Mode
+                // requirement — keyguard failures usually happen with
+                // Lost Mode off. When Lost Mode is on, the loop is
+                // already running and this just captures; when it is
+                // off, the service goes foreground camera-only for the
+                // single photo and stops itself right after.
+                if (LostModeStore.isOn(applicationContext)) {
+                    if (hasMicPermission()) {
+                        if (ensureForeground()) {
+                            scope.launch { captureOnePhoto() }
+                        }
+                    } else if (ensurePhotoForeground()) {
+                        // Mic revoked: clips cannot run, but a still
+                        // photo needs the camera only. Capture
+                        // camera-only, then stop; the UploadWorker
+                        // backstop restarts the service while Lost
+                        // Mode stays on.
+                        scope.launch {
+                            captureOnePhoto()
+                            stopSelf()
+                        }
+                    }
+                } else if (ensurePhotoForeground()) {
+                    scope.launch {
+                        captureOnePhoto()
+                        stopSelf()
+                    }
                 }
             }
             else -> ensureForeground() // ACTION_START or null (START_STICKY restart)
@@ -170,6 +204,72 @@ class EvidenceService : Service() {
         }
     }
 
+    /**
+     * Foreground for the photo-only path (Lost Mode off): camera type
+     * only — a still photo has no audio, and no interval loop starts.
+     * False when the camera permission is missing: nothing to capture.
+     */
+    private fun ensurePhotoForeground(): Boolean {
+        if (!hasCameraPermission()) {
+            stopSelf()
+            return false
+        }
+        createChannel()
+        try {
+            ServiceCompat.startForeground(
+                this,
+                EvidenceConfig.EVIDENCE_NOTIFICATION_ID,
+                buildPhotoNotification(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA,
+            )
+        } catch (e: SecurityException) {
+            stopSelf()
+            return false
+        }
+        return true
+    }
+
+    /**
+     * Captures one front-camera still and queues it for upload,
+     * serialized with clip recording via the same mutex. Unlike
+     * recordOneClip this does NOT require Lost Mode: intruder selfies
+     * fire on keyguard failures, usually with Lost Mode off. The photo
+     * is stored as an EvidenceClipEntity with duration 1s — the server
+     * rejects duration 0, so 1 is the minimum for a still.
+     */
+    private suspend fun captureOnePhoto() {
+        recordMutex.withLock {
+            val app = applicationContext as OpenGuardApp
+            val photo = EvidenceRecorder.capturePhoto(applicationContext) ?: return
+            val dao = app.database.evidenceClipDao()
+            dao.insert(
+                EvidenceClipEntity(
+                    fileName = photo.file.name,
+                    camera = photo.camera,
+                    recordedAt = photo.recordedAt,
+                    durationS = photo.durationS,
+                    sizeBytes = photo.file.length(),
+                ),
+            )
+            EvidenceStorage.enforceCap(applicationContext, dao)
+            EvidenceUploadWorker.enqueueOneTime(applicationContext)
+        }
+    }
+
+    /**
+     * Photo-only notification: must NOT say "Lost Mode" — it is off
+     * on this path. Hardcoded text, matching the DecoyLock and
+     * LostModeActivity convention.
+     */
+    private fun buildPhotoNotification(): Notification {
+        return NotificationCompat.Builder(this, EvidenceConfig.EVIDENCE_CHANNEL_ID)
+            .setContentTitle("OpenGuard")
+            .setContentText("Capturing intruder photo")
+            .setSmallIcon(android.R.drawable.ic_menu_camera)
+            .setOngoing(true)
+            .build()
+    }
+
     private fun hasCameraPermission(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
             PackageManager.PERMISSION_GRANTED
@@ -210,6 +310,7 @@ class EvidenceService : Service() {
         const val ACTION_START = "com.openguard.action.START_EVIDENCE"
         const val ACTION_STOP = "com.openguard.action.STOP_EVIDENCE"
         const val ACTION_CAPTURE_NOW = "com.openguard.action.EVIDENCE_CAPTURE_NOW"
+        const val ACTION_CAPTURE_PHOTO = "com.openguard.action.EVIDENCE_CAPTURE_PHOTO"
 
         /**
          * Start from a foreground context, or from Lost Mode / boot /
@@ -241,6 +342,19 @@ class EvidenceService : Service() {
             ContextCompat.startForegroundService(
                 context,
                 Intent(context, EvidenceService::class.java).setAction(ACTION_CAPTURE_NOW),
+            )
+        }
+
+        /**
+         * Captures one front-camera still (Intruder Selfie). Works
+         * with Lost Mode on or off. Background callers MUST wrap this
+         * in try/catch (IllegalStateException + SecurityException):
+         * the foreground-service start can be denied.
+         */
+        fun capturePhoto(context: Context) {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, EvidenceService::class.java).setAction(ACTION_CAPTURE_PHOTO),
             )
         }
     }

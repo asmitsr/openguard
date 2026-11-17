@@ -50,9 +50,20 @@ object DriveUploader {
     /** Uploads one clip file into the "OpenGuard Evidence" Drive folder. */
     @Throws(IOException::class)
     fun upload(context: Context, accessToken: String, file: File, mimeType: String): UploadedFile {
+        // The caller passes a camera-based MIME (front/back map to
+        // video/mp4), but a .jpg intruder photo must upload as
+        // image/jpeg or Drive shows a broken video. Derive the
+        // effective MIME from the file extension.
+        val effectiveMimeType = if (file.name.endsWith(".jpg", ignoreCase = true) ||
+            file.name.endsWith(".jpeg", ignoreCase = true)
+        ) {
+            "image/jpeg"
+        } else {
+            mimeType
+        }
         val folderId = ensureFolder(context, accessToken)
-        val sessionUri = initiateSession(accessToken, file, mimeType, folderId)
-        return uploadBytes(accessToken, sessionUri, file, mimeType)
+        val sessionUri = initiateSession(accessToken, file, effectiveMimeType, folderId)
+        return uploadBytes(accessToken, sessionUri, file, effectiveMimeType)
     }
 
     /**

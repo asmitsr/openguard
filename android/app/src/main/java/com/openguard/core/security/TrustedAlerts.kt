@@ -50,6 +50,27 @@ object TrustedAlerts {
     }
 
     /**
+     * Duress PIN entered: the owner may be coerced. Silent by design —
+     * nothing shows on the phone (the entry screen already showed the
+     * ordinary "Wrong PIN"). The alert defaults ON once a duress PIN
+     * is set; the owner can turn it off in Settings.
+     */
+    fun onDuress(context: Context) {
+        trySend(
+            context, TYPE_DURESS,
+            "OpenGuard: duress PIN entered on this phone — the owner may be in danger.",
+        )
+    }
+
+    /** Duress SMS alert toggle (Settings): default ON. */
+    fun isDuressAlertEnabled(context: Context): Boolean =
+        alertEnabled(context, TYPE_DURESS)
+
+    fun setDuressAlertEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit { putBoolean(KEY_ENABLED_PREFIX + TYPE_DURESS, enabled) }
+    }
+
+    /**
      * Called from the worker's sync-gap check when the phone comes back
      * online after a gap. Fires only for gaps over an hour, and only
      * once per gap: lastUploadAt is the upload the gap is measured
@@ -93,7 +114,10 @@ object TrustedAlerts {
     }
 
     private fun alertEnabled(context: Context, type: String): Boolean =
-        prefs(context).getBoolean(KEY_ENABLED_PREFIX + type, type == TYPE_SIM_CHANGE)
+        prefs(context).getBoolean(
+            KEY_ENABLED_PREFIX + type,
+            type == TYPE_SIM_CHANGE || type == TYPE_DURESS,
+        )
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
@@ -112,10 +136,11 @@ object TrustedAlerts {
     const val TYPE_SIM_CHANGE = "sim_change"
     const val TYPE_OFFLINE = "offline"
     const val TYPE_LOW_BATTERY = "low_battery"
+    const val TYPE_DURESS = "duress"
 
     // Shared-file spec with SecurityPrefs (coordinator-owned): the
     // Settings toggles MUST read/write these exact keys. Defaults:
-    // SIM change on, offline + low battery off.
+    // SIM change on, offline + low battery off, duress on.
     private const val KEY_ENABLED_PREFIX = "trusted_alert_"
     private const val KEY_LAST_SENT_PREFIX = "trusted_alert_last_sent_"
     private const val KEY_LAST_OFFLINE_ALERT_AT = "trusted_alert_last_offline_alert_at"

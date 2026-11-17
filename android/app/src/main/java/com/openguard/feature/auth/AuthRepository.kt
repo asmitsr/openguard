@@ -194,17 +194,24 @@ class AuthRepository(
      * PasskeyViewModel, which owns the create flow's UI state.
      */
     suspend fun passkeyRegister(name: String, activity: Activity): Result<PasskeyRegisterResponse> {
-        val challenge = apiCall { api.passkeyRegisterChallenge() }
-        if (challenge is Result.Error) return challenge
-        val responseJson = when (val credential =
-            PasskeyManager(activity).createPasskey(challenge.value.toString())) {
-            is Result.Error -> return credential
-            is Result.Success -> credential.value
-        }
-        return apiCall {
-            api.passkeyRegisterVerify(
-                PasskeyRegisterVerifyRequest(name, JsonParser.parseString(responseJson)),
-            )
+        // Same `when` shape as passkeyLogin: the `if (x is Error) return`
+        // form did NOT smart-cast `challenge` to Success here (CI run #16:
+        // "Unresolved reference 'value'"), while the `when` branch form
+        // compiles in login() and passkeyLogin() in this same file.
+        return when (val challenge = apiCall { api.passkeyRegisterChallenge() }) {
+            is Result.Error -> challenge
+            is Result.Success -> {
+                val responseJson = when (val credential =
+                    PasskeyManager(activity).createPasskey(challenge.value.toString())) {
+                    is Result.Error -> return credential
+                    is Result.Success -> credential.value
+                }
+                apiCall {
+                    api.passkeyRegisterVerify(
+                        PasskeyRegisterVerifyRequest(name, JsonParser.parseString(responseJson)),
+                    )
+                }
+            }
         }
     }
 }

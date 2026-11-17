@@ -7,6 +7,8 @@ import android.content.pm.PackageManager
 import android.media.MediaRecorder
 import android.os.Build
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.FallbackStrategy
 import androidx.camera.video.FileOutputOptions
@@ -60,6 +62,13 @@ object EvidenceRecorder {
     )
 
     /**
+     * A still photo has no duration, but the server validates
+     * duration_s as an integer 1..60 and rejects 0 — so a photo posts
+     * the minimum, 1.
+     */
+    private const val PHOTO_DURATION_S = 1
+
+    /**
      * Records one clip. Video first (front or back per [front]);
      * audio-only when the camera is disabled by device admin (Lost Mode
      * does this when admin is active), the camera permission is missing,
@@ -88,6 +97,85 @@ object EvidenceRecorder {
             file.delete()
         }
         return null
+    }
+
+    /**
+     * Takes one front-camera still photo (Intruder Selfie). Returns
+     * null when there is no camera permission or the camera could not
+     * be opened. No audio fallback: a photo has no audio.
+     *
+     * Lost Mode disables the camera via device admin when admin is
+     * active — without a brief re-enable the selfie could never fire
+     * while Lost Mode is on. So when the camera is admin-disabled it
+     * is re-enabled for the capture (about 1-2 seconds, while the
+     * thief is at a lock screen) and re-disabled in a finally block.
+     * The camera is re-disabled ONLY when it was disabled before.
+     *
+     * Android's green camera indicator always shows during the
+     * capture. That is platform-mandated and cannot be hidden.
+     */
+    suspend fun capturePhoto(context: Context): ClipResult? {
+        if (!hasCameraPermission(context)) return null
+        val dir = EvidenceStorage.dir(context)
+        val recordedAt = Instant.now().toString()
+        val stamp = System.currentTimeMillis()
+        val file = File(dir, "photo_" + stamp + "_" + EvidenceConfig.CAMERA_FRONT + ".jpg")
+        val wasDisabled = isCameraDisabledByAdmin(context)
+        if (wasDisabled) {
+            DeviceAdminManager.setCameraDisabled(context, false)
+        }
+        try {
+            if (takePhoto(context, file)) {
+                return ClipResult(file, EvidenceConfig.CAMERA_FRONT, recordedAt, PHOTO_DURATION_S)
+            }
+            file.delete()
+            return null
+        } finally {
+            if (wasDisabled) {
+                DeviceAdminManager.setCameraDisabled(context, true)
+            }
+        }
+    }
+
+    /**
+     * One CameraX still photo: bind ImageCapture to the front camera,
+     * take one JPEG, and wait for the save callback. False when the
+     * camera could not be opened, the capture errored, or the file is
+     * empty.
+     */
+    private suspend fun takePhoto(context: Context, file: File): Boolean {
+        val provider = awaitCameraProvider(context) ?: return false
+        val owner = ServiceLifecycleOwner()
+        val imageCapture = ImageCapture.Builder()
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .build()
+        return try {
+            owner.resume()
+            provider.bindToLifecycle(owner, CameraSelector.DEFAULT_FRONT_CAMERA, imageCapture)
+            val saved = CompletableDeferred<Boolean>()
+            val outputOptions = ImageCapture.OutputFileOptions.Builder(file).build()
+            imageCapture.takePicture(
+                outputOptions,
+                ContextCompat.getMainExecutor(context),
+                object : ImageCapture.OnImageSavedCallback {
+                    override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                        saved.complete(true)
+                    }
+                    override fun onError(exception: ImageCaptureException) {
+                        saved.complete(false)
+                    }
+                },
+            )
+            withTimeoutOrNull(EvidenceConfig.FINALIZE_TIMEOUT_MS) { saved.await() } == true &&
+                file.exists() && file.length() > 0
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        } finally {
+            runCatching { provider.unbindAll() }
+            owner.destroy()
+        }
     }
 
     /**

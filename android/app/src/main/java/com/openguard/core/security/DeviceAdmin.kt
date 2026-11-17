@@ -48,6 +48,9 @@ class OpenGuardDeviceAdmin : DeviceAdminReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 FailedAttemptWipe.onFailedAttempt(context)
+                // Intruder Selfie counts the same failure in its own
+                // time window (no-op when disabled).
+                IntruderSelfie.onKeyguardFailure(context)
             } finally {
                 pending.finish()
             }

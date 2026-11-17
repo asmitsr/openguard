@@ -8,9 +8,9 @@ import androidx.credentials.GetCredentialRequest
 import androidx.credentials.GetPublicKeyCredentialOption
 import androidx.credentials.PublicKeyCredential
 import androidx.credentials.exceptions.CreateCredentialCancellationException
-import androidx.credentials.exceptions.CreateCredentialProviderException
+import androidx.credentials.exceptions.CreateCredentialUnsupportedException
 import androidx.credentials.exceptions.GetCredentialCancellationException
-import androidx.credentials.exceptions.GetCredentialProviderException
+import androidx.credentials.exceptions.GetCredentialUnsupportedException
 import androidx.credentials.exceptions.NoCredentialException
 import com.openguard.core.common.Result
 
@@ -44,7 +44,11 @@ class PasskeyManager(private val activity: Activity) {
         Result.Success(publicKey.registrationResponseJson)
     } catch (e: CreateCredentialCancellationException) {
         Result.Error(CANCELLED, e)
-    } catch (e: CreateCredentialProviderException) {
+    } catch (e: CreateCredentialUnsupportedException) {
+        // No credential provider on this phone (Credential Manager
+        // unsupported/disabled). There is no CreateCredentialProvider-
+        // Exception in the API — the *Provider* classes are the
+        // *ProviderConfigurationException ones, a different error.
         Result.Error(NO_PROVIDER, e)
     } catch (e: Exception) {
         Result.Error(e.message ?: "Could not create a passkey.", e)
@@ -61,7 +65,9 @@ class PasskeyManager(private val activity: Activity) {
         Result.Success(credential.authenticationResponseJson)
     } catch (e: GetCredentialCancellationException) {
         Result.Error(CANCELLED, e)
-    } catch (e: GetCredentialProviderException) {
+    } catch (e: GetCredentialUnsupportedException) {
+        // No credential provider on this phone. There is no
+        // GetCredentialProviderException in the API (see createPasskey).
         Result.Error(NO_PROVIDER, e)
     } catch (e: NoCredentialException) {
         Result.Error("No passkey found for this account on this phone.", e)

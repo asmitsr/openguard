@@ -498,7 +498,14 @@ private fun createDecoyView(appContext: Context): Pair<View, TextView> {
                 statusView.setTextColor(COLOR_ERROR.toInt())
                 handler.postDelayed(this, 1000)
             } else {
-                refreshStatus()
+                // Lockout expired: mirrors refreshStatus()'s expired branch
+                // inline. A direct call is impossible here — local functions
+                // are only visible after their declaration, and refreshStatus
+                // is declared below (it must stay below startLockoutTick,
+                // which needs lockoutTick first: a declaration-order cycle).
+                patternGrid.isEnabled = true
+                statusView.text = defaultStatus()
+                statusView.setTextColor(COLOR_SECONDARY.toInt())
             }
         }
     }

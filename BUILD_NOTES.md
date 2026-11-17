@@ -1238,3 +1238,35 @@ shipped in Batch 1.
 - Note: the CI log reported credentials 1.5.0 while the pushed catalog pins
   1.6.0 — unresolved transcription/resolution discrepancy; the fix satisfies
   both versions, so it does not block the build.
+
+## CI fix — run #16 (17 Nov 2026, commit e016473, 43 Kotlin errors)
+- ROOT CAUSE (sequencing, parent's mistake): the app-lock zip was REBUILT
+  after the CI fix, by which time the tree already held the #5/#6/#8
+  coordinator's edits to DecoyLock.kt, LostModeActivity.kt,
+  SettingsScreen.kt and AppLockPassword.kt — so e016473 shipped code that
+  references DuressResponse / IntruderSelfie / FakeShutdownLock /
+  isDuressAlertEnabled / setDuressAlertEnabled WITHOUT the files that define
+  them (those ride in the #5/#6/#8 push). The SettingsScreen type-inference
+  errors are cascades of the same missing symbols. Lesson: never rebuild a
+  push zip from a tree that another round has edited since — freeze the zip
+  or rebuild the file list from the round's explicit list.
+- DecoyLock.kt:501: `refreshStatus()` called from the anonymous Runnable
+  `lockoutTick` BEFORE its declaration — local functions are only visible
+  after their declaration point, and the declaration order is a cycle
+  (lockoutTick -> refreshStatus -> startLockoutTick -> lockoutTick). Fixed
+  by inlining refreshStatus()'s expired branch (3 lines) into the tick's
+  else branch, with a comment.
+- PasskeyManager.kt: `CreateCredentialProviderException` /
+  `GetCredentialProviderException` DO NOT EXIST in androidx.credentials
+  (verified against the official API reference — the *Provider* classes are
+  the *ProviderConfigurationException ones, a different error). Replaced
+  with the real 1.2.0-era `CreateCredentialUnsupportedException` /
+  `GetCredentialUnsupportedException`, which mean "no provider on this
+  phone" — the NO_PROVIDER mapping's intent.
+- AuthRepository.kt:200: passkeyRegister's `if (x is Error) return` form did
+  NOT smart-cast `challenge` to Success ("Unresolved reference 'value'").
+  Rewritten to the `when` form used by login() and passkeyLogin() in the
+  same file (which compile). The `when` form is now the house pattern for
+  Result narrowing in this file.
+- This push (#5/#6/#8 + the three fixes) is the first commit that compiles
+  after Batch 1; e016473 never produced an APK.

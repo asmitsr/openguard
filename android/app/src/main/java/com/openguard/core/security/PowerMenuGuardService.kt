@@ -42,10 +42,17 @@ class PowerMenuGuardService : AccessibilityService() {
         if (event.packageName?.toString() != "com.android.systemui") return
         val className = event.className?.toString().orEmpty()
         if (!className.contains("GlobalActions") && !className.contains("PowerMenu")) return
-        // Power menu appeared during Lost Mode: dismiss it and bring the
-        // decoy lock back to the front.
+        // Power menu appeared during Lost Mode: dismiss it and bring
+        // the decoy lock back to the front — or the fake shutdown
+        // screen, when the owner enabled it. If the fake screen
+        // cannot show (no overlay permission), fall back to the
+        // decoy, same as before.
         performGlobalAction(GLOBAL_ACTION_BACK)
-        DecoyLock.show(this)
+        if (FakeShutdownLock.isEnabled(this)) {
+            if (!FakeShutdownLock.show(this)) DecoyLock.show(this)
+        } else {
+            DecoyLock.show(this)
+        }
     }
 
     override fun onInterrupt() {
